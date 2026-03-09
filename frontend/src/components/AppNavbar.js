@@ -20,6 +20,9 @@ function AppNavbar() {
             <Nav.Link as={Link} to="/items" active={location.pathname.startsWith('/items')}>
               Items
             </Nav.Link>
+            <Nav.Link as={Link} to ="/login" active={location.pathname.startsWith('/login')}>
+            Login
+            </Nav.Link>
           </Nav>
         </Navbar.Collapse>
       </Container>
