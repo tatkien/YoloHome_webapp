@@ -17,9 +17,6 @@ function AppNavbar() {
             <Nav.Link as={Link} to="/" active={location.pathname === '/'}>
               Home
             </Nav.Link>
-            <Nav.Link as={Link} to="/items" active={location.pathname.startsWith('/items')}>
-              Items
-            </Nav.Link>
           </Nav>
         </Navbar.Collapse>
       </Container>
