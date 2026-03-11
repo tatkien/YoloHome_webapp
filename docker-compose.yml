@@ -1,15 +1,13 @@
-version: "3.9"
-
 services:
   db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg17
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: ntk06082005
       POSTGRES_DB: yolohome
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -22,7 +20,7 @@ services:
     build: ./backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:password@db:5432/yolohome
+      DATABASE_URL: postgresql+asyncpg://postgres:ntk06082005@db:5432/yolohome
       SECRET_KEY: changeme
       DEBUG: "true"
     ports:

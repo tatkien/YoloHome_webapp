@@ -7,6 +7,9 @@ psycopg2-binary==2.9.11
 python-dotenv==1.2.2
 pydantic-settings==2.13.1
 httpx==0.28.1
+PyJWT==2.10.1
+python-multipart==0.0.20
+pgvector==0.3.6
 
 # Test dependencies
 pytest==9.0.2

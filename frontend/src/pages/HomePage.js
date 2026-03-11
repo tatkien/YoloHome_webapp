@@ -1,6 +1,5 @@
 import React from 'react';
-import { Container, Row, Col, Card, Button } from 'react-bootstrap';
-import { Link } from 'react-router-dom';
+import { Container, Row, Col, Card } from 'react-bootstrap';
 
 function HomePage() {
   return (
@@ -11,9 +10,6 @@ function HomePage() {
           <p className="lead text-muted">
             A smart home web application built with React, Bootstrap, FastAPI and PostgreSQL.
           </p>
-          <Button as={Link} to="/items" variant="primary" size="lg" className="mt-3">
-            Manage Items
-          </Button>
         </Col>
       </Row>
 
