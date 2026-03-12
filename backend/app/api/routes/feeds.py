@@ -5,7 +5,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_admin_user, get_current_user
 from app.core.security import verify_secret
 from app.db.session import get_db
 from app.models.device import Device
@@ -81,15 +81,11 @@ async def _create_feed_value(
 @router.get("/", response_model=list[FeedRead])
 async def list_feeds(
     device_id: int | None = Query(default=None),
-    current_user: User = Depends(get_current_user),
+    _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return feeds that belong to the current user's devices."""
-    query = (
-        sa.select(Feed)
-        .join(Device, Feed.device_id == Device.id)
-        .where(Device.owner_id == current_user.id)
-    )
+    """Return all feeds, optionally filtered by device."""
+    query = sa.select(Feed)
     if device_id is not None:
         query = query.where(Feed.device_id == device_id)
     result = await db.execute(query.order_by(Feed.created_at.desc()))
@@ -99,12 +95,10 @@ async def list_feeds(
 @router.post("/", response_model=FeedRead, status_code=status.HTTP_201_CREATED)
 async def create_feed(
     payload: FeedCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     device = await _get_device_or_404(db, payload.device_id)
-    if device.owner_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     feed_key = _slugify(payload.key or payload.name)
     if not feed_key:
         raise HTTPException(
@@ -137,10 +131,10 @@ async def create_feed(
 @router.get("/{feed_id}", response_model=FeedRead)
 async def read_feed(
     feed_id: int,
-    current_user: User = Depends(get_current_user),
+    _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await _get_owned_feed(db, feed_id, current_user)
+    return await _get_feed_or_404(db, feed_id)
 
 
 @router.get("/{feed_id}/values", response_model=list[FeedValueRead])
@@ -148,10 +142,10 @@ async def list_feed_values(
     feed_id: int,
     limit: int = Query(default=100, ge=1, le=500),
     since: datetime | None = Query(default=None),
-    current_user: User = Depends(get_current_user),
+    _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await _get_owned_feed(db, feed_id, current_user)
+    await _get_feed_or_404(db, feed_id)
     query = sa.select(FeedValue).where(FeedValue.feed_id == feed_id)
     if since is not None:
         query = query.where(FeedValue.created_at >= since)
@@ -166,7 +160,7 @@ async def publish_feed_value(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    feed = await _get_owned_feed(db, feed_id, current_user)
+    feed = await _get_feed_or_404(db, feed_id)
     if feed.data_type == "number":
         try:
             float(payload.value)

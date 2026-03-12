@@ -5,7 +5,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_admin_user, get_current_user
 from app.core.security import generate_device_key, hash_secret, verify_secret
 from app.db.session import get_db
 from app.models.command import Command
@@ -71,19 +71,17 @@ def _device_with_key(device: Device, raw_key: str) -> DeviceWithKey:
 
 @router.get("/", response_model=list[DeviceRead])
 async def list_devices(
-    current_user: User = Depends(get_current_user),
+    _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all devices belonging to the current user.
+    """List all devices in the home.
 
-    Returns devices sorted by creation date (newest first).
-    Devices owned by other users are never included in the response.
+    Returns all devices sorted by creation date (newest first).
 
     Auth: JWT required.
     """
     result = await db.execute(
         sa.select(Device)
-        .where(Device.owner_id == current_user.id)
         .order_by(Device.created_at.desc())
     )
     return result.scalars().all()
@@ -92,13 +90,13 @@ async def list_devices(
 @router.post("/", response_model=DeviceWithKey, status_code=status.HTTP_201_CREATED)
 async def create_device(
     payload: DeviceCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Register a new device under the current user's account.
+    """Register a new device.
 
     Accepted device types: ``light``, ``fan``, ``camera``.
-    A URL-safe slug is derived from the device name and must be unique per owner.
+    A URL-safe slug is derived from the device name and must be globally unique.
     A default feed is automatically created for the device type:
     - light  → "Light State"   (text)
     - fan    → "Fan Speed"     (number)
@@ -107,11 +105,11 @@ async def create_device(
     The plaintext ``device_key`` is included in the response exactly once and
     is never stored — flash it to the hardware immediately.
 
-    Auth: JWT required.
+    Auth: JWT required. Admin only.
 
     Raises:
         400: Device name produces an empty slug.
-        409: Owner already has a device with a conflicting slug.
+        409: A device with a conflicting slug already exists.
     """
     slug = _slugify(payload.name)
     if not slug:
@@ -120,14 +118,13 @@ async def create_device(
             detail="Device name produces an empty slug",
         )
 
-    # Slug only needs to be unique per owner, not globally
     existing = await db.execute(
-        sa.select(Device).where(Device.owner_id == current_user.id, Device.slug == slug)
+        sa.select(Device).where(Device.slug == slug)
     )
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="You already have a device with a similar name",
+            detail="A device with a similar name already exists",
         )
 
     raw_key = generate_device_key()
@@ -160,24 +157,23 @@ async def create_device(
 @router.get("/{device_id}", response_model=DeviceRead)
 async def read_device(
     device_id: int,
-    current_user: User = Depends(get_current_user),
+    _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Retrieve a single device by ID.
 
-    Auth: JWT required. The requesting user must be the device owner.
+    Auth: JWT required.
 
     Raises:
         404: Device not found.
-        403: Requesting user does not own the device.
     """
-    return await _get_owned_device(db, device_id, current_user)
+    return await _get_device_or_404(db, device_id)
 
 
 @router.post("/{device_id}/rotate-key", response_model=DeviceWithKey)
 async def rotate_device_key(
     device_id: int,
-    current_user: User = Depends(get_current_user),
+    _: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Rotate the hardware authentication key for a device.
@@ -189,13 +185,12 @@ async def rotate_device_key(
     The plaintext key is returned once in the response and never stored —
     copy it before closing the response.
 
-    Auth: JWT required. The requesting user must be the device owner.
+    Auth: JWT required. Admin only.
 
     Raises:
         404: Device not found.
-        403: Requesting user does not own the device.
     """
-    device = await _get_owned_device(db, device_id, current_user)
+    device = await _get_device_or_404(db, device_id)
     raw_key = generate_device_key()
     device.key_hash = hash_secret(raw_key)
     await db.commit()
@@ -236,7 +231,7 @@ async def device_heartbeat(
 @router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_device(
     device_id: int,
-    current_user: User = Depends(get_current_user),
+    _: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Permanently delete a device and all its associated data.
@@ -244,13 +239,12 @@ async def delete_device(
     Cascade rules on the database model handle removal of related feeds,
     commands, and feed values.
 
-    Auth: JWT required. The requesting user must be the device owner.
+    Auth: JWT required. Admin only.
 
     Raises:
         404: Device not found.
-        403: Requesting user does not own the device.
     """
-    device = await _get_owned_device(db, device_id, current_user)
+    device = await _get_device_or_404(db, device_id)
     await db.delete(device)
     await db.commit()
 
@@ -271,13 +265,12 @@ async def list_device_commands(
     This is a read-only endpoint with no side effects — commands are not
     mutated or consumed by this call.
 
-    Auth: JWT required. The requesting user must be the device owner.
+    Auth: JWT required.
 
     Raises:
         404: Device not found.
-        403: Requesting user does not own the device.
     """
-    await _get_owned_device(db, device_id, current_user)
+    await _get_device_or_404(db, device_id)
     query = sa.select(Command).where(Command.device_id == device_id)
     if command_status:
         query = query.where(Command.status == command_status)
@@ -304,14 +297,13 @@ async def create_command(
 
     The physical device picks up the command via ``GET /commands/pending``.
 
-    Auth: JWT required. The requesting user must be the device owner.
+    Auth: JWT required.
 
     Raises:
         400: ``feed_id`` does not belong to the specified device.
         404: Device not found.
-        403: Requesting user does not own the device.
     """
-    await _get_owned_device(db, device_id, current_user)
+    await _get_device_or_404(db, device_id)
     if payload.feed_id is not None:
         result = await db.execute(
             sa.select(Feed).where(
