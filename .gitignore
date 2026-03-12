@@ -32,3 +32,9 @@ Thumbs.db
 
 # Docker
 *.override.yml
+
+#Models
+models/model_weights/
+models/arcface_resnet100.onnx
+models/arcface_resnet100.onnx.data
+models/iresnet.py
