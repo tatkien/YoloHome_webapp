@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     DEBUG: bool = True
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
+    ADMIN_USERNAME: str = "admin"
+    ADMIN_PASSWORD: str = "admin"
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

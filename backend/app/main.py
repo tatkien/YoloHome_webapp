@@ -17,9 +17,9 @@ async def _seed_admin() -> None:
         count = await db.scalar(sa.select(sa.func.count()).select_from(User))
         if count == 0:
             db.add(User(
-                username="admin",
+                username=settings.ADMIN_USERNAME,
                 full_name="Administrator",
-                hashed_password=hash_secret("kiendeptrai"),
+                hashed_password=hash_secret(settings.ADMIN_PASSWORD),
                 role="admin",
                 is_active=True,
             ))
