@@ -38,6 +38,8 @@ YoloHome_webapp/
 │   ├── Dockerfile
 │   └── requirements.txt
 │
+├── models/
+|  
 └── docker-compose.yml      # One-command local environment
 ```
 
