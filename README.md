@@ -15,32 +15,32 @@ A smart home web application built with the following tech stack:
 ## Project Structure
 
 ```
+t
 YoloHome_webapp/
-├── frontend/               # React + Bootstrap frontend
+├── frontend/                # React + Bootstrap frontend
 │   ├── src/
-│   │   ├── components/     # Shared UI components (Navbar, …)
-│   │   ├── pages/          # Page-level components (Home, Items, …)
-│   │   └── services/       # Axios API client
-│   ├── .env.example        # Environment variable template
-│   ├── Dockerfile
-│   └── nginx.conf          # Nginx config for production container
-│
-├── backend/                # FastAPI backend
+│   │   ├── components/      # Shared UI components (Navbar, Card, Widget...)
+│   │   ├── services/        # Axios API Client & WebSocket Manager
+│   │   └── pages/           # Dashboard, AI Logs, Device Manager...
+│   ├── nginx.conf           # Nginx config for production container
+|   └── Dockerfile
+|
+├── backend/                 # FastAPI AI-IoT Gateway
 │   ├── app/
-│   │   ├── api/routes/     # Route handlers
-│   │   ├── core/           # App settings
-│   │   ├── db/             # Database session
-│   │   ├── models/         # SQLAlchemy ORM models
-│   │   ├── schemas/        # Pydantic schemas
-│   │   └── tests/          # Pytest test suite
-│   ├── alembic/            # Database migrations
-│   ├── .env.example        # Environment variable template
-│   ├── Dockerfile
-│   └── requirements.txt
-│
-├── models/
-|  
-└── docker-compose.yml      # One-command local environment
+│   │   ├── api/routes/      # Route handlers
+│   │   ├── core/            # App settings
+│   │   ├── services/        # Core Logic: mqtt_handler.py, face_service.py, voice_service.py
+│   │   ├── models/          # SQLAlchemy ORM models
+│   │   ├── schemas/         # Pydantic Data Validation
+│   │   ├── database/        # DB Connection & Session
+│   │   └── tests/           # Pytest test suite
+│   ├── alembic/             # Database Migrations
+│   ├── .env.example         # Environment variable template
+│   ├── requirements.txt
+│   └── Dockerfile
+|
+├── ai_models/               # Chứa các file não bộ AI
+└── docker-compose.yml       # Khởi động toàn bộ hệ thống (Web + DB + MQTT)
 ```
 
 ---
