@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-DeviceType = Literal["fan", "light", "camera"]
+DeviceType = Literal["fan", "light", "camera", "temp_sensor", "humidity_sensor"]
 
 
 class DeviceCreate(BaseModel):

@@ -10,11 +10,18 @@ from app.core.security import generate_device_key, hash_secret, verify_secret
 from app.db.session import get_db
 from app.models.command import Command
 from app.models.device import Device
+from app.models.device_schedule import DeviceSchedule
 from app.models.feed import Feed
 from app.models.user import User
 from app.realtime.manager import realtime_manager
-from app.schemas.command import CommandAcknowledge, CommandCreate, CommandRead
+from app.schemas.command import (
+    CommandAcknowledge,
+    CommandCreate,
+    CommandRead,
+    DeviceActivityRead,
+)
 from app.schemas.device import DeviceCreate, DeviceRead, DeviceWithKey
+from app.schemas.schedule import DeviceScheduleCreate, DeviceScheduleRead
 
 router = APIRouter(prefix="/devices", tags=["devices"])
 
@@ -23,6 +30,8 @@ _DEFAULT_FEED: dict[str, dict] = {
     "light":  {"name": "Light State",    "key": "light-state",    "data_type": "text"},
     "fan":    {"name": "Fan Speed",       "key": "fan-speed",      "data_type": "number"},
     "camera": {"name": "Face Detection",  "key": "face-detection", "data_type": "text"},
+    "temp_sensor": {"name": "Temperature", "key": "temperature", "data_type": "number"},
+    "humidity_sensor": {"name": "Humidity", "key": "humidity", "data_type": "number"},
 }
 
 
@@ -95,12 +104,14 @@ async def create_device(
 ):
     """Register a new device.
 
-    Accepted device types: ``light``, ``fan``, ``camera``.
+    Accepted device types: ``light``, ``fan``, ``camera``, ``temp_sensor``, ``humidity_sensor``.
     A URL-safe slug is derived from the device name and must be globally unique.
     A default feed is automatically created for the device type:
-    - light  → "Light State"   (text)
-    - fan    → "Fan Speed"     (number)
-    - camera → "Face Detection" (text)
+    - light          → "Light State"   (text)
+    - fan            → "Fan Speed"     (number)
+    - camera         → "Face Detection" (text)
+    - temp_sensor    → "Temperature"   (number)
+    - humidity_sensor → "Humidity"     (number)
 
     The plaintext ``device_key`` is included in the response exactly once and
     is never stored — flash it to the hardware immediately.
@@ -249,6 +260,99 @@ async def delete_device(
     await db.commit()
 
 
+@router.get("/{device_id}/schedules", response_model=list[DeviceScheduleRead])
+async def list_device_schedules(
+    device_id: int,
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List schedules for a device.
+
+    Auth: JWT required.
+
+    Raises:
+        404: Device not found.
+    """
+    await _get_device_or_404(db, device_id)
+    result = await db.execute(
+        sa.select(DeviceSchedule)
+        .where(DeviceSchedule.device_id == device_id)
+        .order_by(DeviceSchedule.time_of_day.asc())
+    )
+    return result.scalars().all()
+
+
+@router.post("/{device_id}/schedules", response_model=DeviceScheduleRead, status_code=status.HTTP_201_CREATED)
+async def create_device_schedule(
+    device_id: int,
+    payload: DeviceScheduleCreate,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a daily schedule for a light device.
+
+    Auth: JWT required. Admin only.
+
+    Raises:
+        400: Schedule time includes seconds, or device type is unsupported.
+        404: Device not found.
+    """
+    device = await _get_device_or_404(db, device_id)
+    if device.device_type != "light":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Scheduling is only supported for light devices",
+        )
+
+    if payload.time_of_day.second or payload.time_of_day.microsecond:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Schedule time must be in HH:MM format",
+        )
+
+    schedule = DeviceSchedule(
+        device_id=device_id,
+        time_of_day=payload.time_of_day.replace(second=0, microsecond=0),
+        action=payload.action,
+        is_active=payload.is_active,
+        created_by_id=current_user.id,
+    )
+    db.add(schedule)
+    await db.commit()
+    await db.refresh(schedule)
+    return schedule
+
+
+@router.delete("/{device_id}/schedules/{schedule_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_device_schedule(
+    device_id: int,
+    schedule_id: int,
+    _: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a device schedule.
+
+    Auth: JWT required. Admin only.
+
+    Raises:
+        404: Schedule not found.
+    """
+    result = await db.execute(
+        sa.select(DeviceSchedule).where(
+            DeviceSchedule.id == schedule_id,
+            DeviceSchedule.device_id == device_id,
+        )
+    )
+    schedule = result.scalar_one_or_none()
+    if schedule is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Schedule not found",
+        )
+    await db.delete(schedule)
+    await db.commit()
+
+
 @router.get("/{device_id}/commands", response_model=list[CommandRead])
 async def list_device_commands(
     device_id: int,
@@ -276,6 +380,48 @@ async def list_device_commands(
         query = query.where(Command.status == command_status)
     result = await db.execute(query.order_by(Command.created_at.desc()))
     return result.scalars().all()
+
+
+@router.get("/{device_id}/activity", response_model=list[DeviceActivityRead])
+async def list_device_activity(
+    device_id: int,
+    limit: int = Query(default=20, ge=1, le=200),
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return recent device activity based on command history.
+
+    Auth: JWT required.
+
+    Raises:
+        404: Device not found.
+    """
+    await _get_device_or_404(db, device_id)
+    result = await db.execute(
+        sa.select(Command, User.username)
+        .outerjoin(User, User.id == Command.created_by_id)
+        .where(Command.device_id == device_id)
+        .order_by(Command.created_at.desc())
+        .limit(limit)
+    )
+    activities: list[DeviceActivityRead] = []
+    for command, username in result.all():
+        activities.append(
+            DeviceActivityRead(
+                id=command.id,
+                device_id=command.device_id,
+                feed_id=command.feed_id,
+                payload=command.payload,
+                result=command.result,
+                status=command.status,
+                delivered_at=command.delivered_at,
+                acknowledged_at=command.acknowledged_at,
+                created_at=command.created_at,
+                created_by_id=command.created_by_id,
+                created_by_username=username,
+            )
+        )
+    return activities
 
 
 @router.post("/{device_id}/commands", response_model=CommandRead, status_code=status.HTTP_201_CREATED)

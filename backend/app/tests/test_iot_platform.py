@@ -4,14 +4,15 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.core.security import hash_secret
+from app.core.config import settings
 from app.db.session import Base, get_db
 from app.main import app
-from app.models.user import User
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 _ADMIN_PASSWORD = "kiendeptrai"
+_SETUP_CODE = "setup-code-test"
+_INVITATION_KEY = "invite-123456"
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -40,48 +41,43 @@ async def client(test_db):
 
 
 @pytest_asyncio.fixture(scope="function")
-async def admin_headers(client: AsyncClient, test_db: AsyncSession) -> dict[str, str]:
-    """Seed the admin user directly into the test DB, then return auth headers."""
-    admin = User(
-        username="admin",
-        full_name="Administrator",
-        hashed_password=hash_secret(_ADMIN_PASSWORD),
-        role="admin",
-        is_active=True,
+async def admin_headers(client: AsyncClient) -> dict[str, str]:
+    """Register the first admin via setup code, then return auth headers."""
+    settings.SETUP_CODE = _SETUP_CODE
+    register_response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": "admin",
+            "password": _ADMIN_PASSWORD,
+            "full_name": "Administrator",
+            "registration_code": _SETUP_CODE,
+        },
     )
-    test_db.add(admin)
-    await test_db.commit()
-
-    login_response = await client.post(
-        "/api/v1/auth/login",
-        json={"username": "admin", "password": _ADMIN_PASSWORD},
-    )
-    assert login_response.status_code == 200
-    token = login_response.json()["access_token"]
+    assert register_response.status_code == 201
+    token = register_response.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.mark.asyncio
 async def test_admin_can_create_user_and_read_profile(client, admin_headers):
-
-    create_user_response = await client.post(
-        "/api/v1/users/",
+    invitation_response = await client.put(
+        "/api/v1/admin/users/invitation-key",
         headers=admin_headers,
+        json={"invitation_key": _INVITATION_KEY},
+    )
+    assert invitation_response.status_code == 200
+
+    register_response = await client.post(
+        "/api/v1/auth/register",
         json={
             "username": "operator",
             "password": "secret123",
             "full_name": "Operator",
-            "role": "user",
+            "registration_code": _INVITATION_KEY,
         },
     )
-    assert create_user_response.status_code == 201
-
-    login_response = await client.post(
-        "/api/v1/auth/login",
-        json={"username": "operator", "password": "secret123"},
-    )
-    assert login_response.status_code == 200
-    token = login_response.json()["access_token"]
+    assert register_response.status_code == 201
+    token = register_response.json()["access_token"]
 
     profile_response = await client.get(
         "/api/v1/auth/me",
@@ -92,39 +88,49 @@ async def test_admin_can_create_user_and_read_profile(client, admin_headers):
 
 
 @pytest.mark.asyncio
-async def test_user_can_create_own_device(client, admin_headers):
-    # Create a second regular user
-    user_response = await client.post(
-        "/api/v1/users/",
+async def test_user_cannot_create_device_but_can_list(client, admin_headers):
+    # Set an invitation key for user registration
+    invitation_response = await client.put(
+        "/api/v1/admin/users/invitation-key",
         headers=admin_headers,
-        json={"username": "viewer", "password": "secret123", "role": "user"},
+        json={"invitation_key": _INVITATION_KEY},
+    )
+    assert invitation_response.status_code == 200
+
+    # Register a regular user
+    user_response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": "viewer",
+            "password": "secret123",
+            "registration_code": _INVITATION_KEY,
+        },
     )
     assert user_response.status_code == 201
 
-    login_response = await client.post(
-        "/api/v1/auth/login",
-        json={"username": "viewer", "password": "secret123"},
-    )
-    token = login_response.json()["access_token"]
-    user_headers = {"Authorization": f"Bearer {token}"}
+    user_token = user_response.json()["access_token"]
+    user_headers = {"Authorization": f"Bearer {user_token}"}
 
-    # Regular user should be able to create their own device
+    # Admin creates the device
+    create_response = await client.post(
+        "/api/v1/devices/",
+        headers=admin_headers,
+        json={"name": "Lab Sensor", "device_type": "light"},
+    )
+    assert create_response.status_code == 201
+
+    # Regular user should not be able to create devices
     response = await client.post(
         "/api/v1/devices/",
         headers=user_headers,
         json={"name": "Lab Sensor", "device_type": "light"},
     )
-    assert response.status_code == 201
-    assert response.json()["device_type"] == "light"
+    assert response.status_code == 403
 
-    # The device should appear in their own list
+    # Regular user should still be able to list devices
     list_response = await client.get("/api/v1/devices/", headers=user_headers)
     assert list_response.status_code == 200
     assert len(list_response.json()) == 1
-
-    # Admin's device list should be separate (empty unless admin created one too)
-    admin_list = await client.get("/api/v1/devices/", headers=admin_headers)
-    assert len(admin_list.json()) == 0
 
 
 @pytest.mark.asyncio

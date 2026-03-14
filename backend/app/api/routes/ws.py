@@ -4,12 +4,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decode_access_token
 from app.db.session import get_db
+from app.models.command import Command
 from app.models.device import Device
 from app.models.feed import Feed
 from app.models.user import User
 from app.realtime.manager import realtime_manager
+from app.schemas.command import DeviceActivityRead
 
 router = APIRouter(tags=["ws"])
+
+_DEVICE_HISTORY_LIMIT = 20
 
 
 async def _resolve_websocket_user(token: str | None, db: AsyncSession) -> User:
@@ -64,6 +68,38 @@ async def device_stream(
 
     await realtime_manager.connect_device(device_id, websocket)
     await websocket.send_json({"type": "subscription.ready", "device_id": device_id})
+    result = await db.execute(
+        sa.select(Command, User.username)
+        .outerjoin(User, User.id == Command.created_by_id)
+        .where(Command.device_id == device_id)
+        .order_by(Command.created_at.desc())
+        .limit(_DEVICE_HISTORY_LIMIT)
+    )
+    history: list[dict] = []
+    for command, username in result.all():
+        history.append(
+            DeviceActivityRead(
+                id=command.id,
+                device_id=command.device_id,
+                feed_id=command.feed_id,
+                payload=command.payload,
+                result=command.result,
+                status=command.status,
+                delivered_at=command.delivered_at,
+                acknowledged_at=command.acknowledged_at,
+                created_at=command.created_at,
+                created_by_id=command.created_by_id,
+                created_by_username=username,
+            ).model_dump(mode="json")
+        )
+    await websocket.send_json(
+        {
+            "type": "device.activity.history",
+            "device_id": device_id,
+            "limit": _DEVICE_HISTORY_LIMIT,
+            "items": history,
+        }
+    )
     try:
         while True:
             message = await websocket.receive_text()
