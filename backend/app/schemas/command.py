@@ -25,3 +25,17 @@ class CommandRead(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DeviceActivityRead(BaseModel):
+    id: int
+    device_id: int
+    feed_id: int | None = None
+    payload: dict[str, Any]
+    result: dict[str, Any] | None = None
+    status: str
+    delivered_at: datetime | None = None
+    acknowledged_at: datetime | None = None
+    created_at: datetime
+    created_by_id: int | None = None
+    created_by_username: str | None = None

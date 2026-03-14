@@ -2,7 +2,7 @@ import sqlalchemy as sa
 
 from app.db.session import Base
 
-DEVICE_TYPES = ("fan", "light", "camera")
+DEVICE_TYPES = ("fan", "light", "camera", "temp_sensor", "humidity_sensor")
 
 
 class Device(Base):
@@ -15,7 +15,7 @@ class Device(Base):
     id = sa.Column(sa.Integer, primary_key=True, index=True)
     name = sa.Column(sa.String(255), nullable=False)
     slug = sa.Column(sa.String(128), nullable=False, index=True)
-    # fan | light | camera
+    # fan | light | camera | temp_sensor | humidity_sensor
     device_type = sa.Column(sa.String(32), nullable=False)
     description = sa.Column(sa.Text, nullable=True)
     key_hash = sa.Column(sa.Text, nullable=False)

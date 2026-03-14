@@ -15,32 +15,34 @@ A smart home web application built with the following tech stack:
 ## Project Structure
 
 ```
-t
 YoloHome_webapp/
-├── frontend/                # React + Bootstrap frontend
-│   ├── src/
-│   │   ├── components/      # Shared UI components (Navbar, Card, Widget...)
-│   │   ├── services/        # Axios API Client & WebSocket Manager
-│   │   └── pages/           # Dashboard, AI Logs, Device Manager...
-│   ├── nginx.conf           # Nginx config for production container
-|   └── Dockerfile
-|
-├── backend/                 # FastAPI AI-IoT Gateway
+├── backend/                # FastAPI backend
 │   ├── app/
-│   │   ├── api/routes/      # Route handlers
-│   │   ├── core/            # App settings
-│   │   ├── services/        # Core Logic: mqtt_handler.py, face_service.py, voice_service.py
-│   │   ├── models/          # SQLAlchemy ORM models
-│   │   ├── schemas/         # Pydantic Data Validation
-│   │   ├── database/        # DB Connection & Session
-│   │   └── tests/           # Pytest test suite
-│   ├── alembic/             # Database Migrations
-│   ├── .env.example         # Environment variable template
+│   │   ├── api/            # Route handlers
+│   │   ├── core/           # App settings
+│   │   ├── db/             # Database session
+│   │   ├── models/         # SQLAlchemy ORM models
+│   │   ├── realtime/       # WebSocket + scheduler utilities
+│   │   ├── schemas/        # Pydantic schemas
+│   │   └── tests/          # Pytest test suite
+│   ├── alembic/            # Database migrations
+│   ├── Dockerfile
 │   ├── requirements.txt
-│   └── Dockerfile
-|
-├── ai_models/               # Chứa các file não bộ AI
-└── docker-compose.yml       # Khởi động toàn bộ hệ thống (Web + DB + MQTT)
+│   └── .env.example        # Environment variable template
+│
+├── frontend/               # React + Bootstrap frontend
+│   ├── public/
+│   ├── src/
+│   │   ├── components/
+│   │   ├── pages/
+│   │   └── services/
+│   ├── Dockerfile
+│   ├── nginx.conf
+│   └── package.json
+│
+├── models/                 # ML model weights
+├── gateway.py
+└── docker-compose.yml      # One-command local environment
 ```
 
 ---
@@ -52,7 +54,7 @@ docker compose up --build
 ```
 
 This starts:
-- **PostgreSQL** on port `5432`
+- **PostgreSQL** on port `5433`
 - **FastAPI** backend on port `8000`  
 - **React** frontend on port `3000`
 
@@ -94,7 +96,10 @@ SECRET_KEY=replace-this-in-real-environments
 JWT_ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=60
 CORS_ORIGINS=http://localhost:3000
+SETUP_CODE=yolohome2024
 ```
+
+When using Docker Compose, set `SETUP_CODE` in docker-compose.yml (or add an `env_file` for the backend service) so admin registration works.
 
 ### Frontend
 
@@ -140,21 +145,25 @@ npm test
 | GET | `/health` | — | Health check |
 | **Auth** |
 | POST | `/api/v1/auth/login` | — | Log in and receive a JWT access token |
+| POST | `/api/v1/auth/register` | — | Register (setup code for first admin, invitation key for users) |
 | GET | `/api/v1/auth/me` | JWT | Read the current authenticated user's profile |
 | **Users** |
-| GET | `/api/v1/users/` | Admin | List all users |
-| POST | `/api/v1/users/` | Admin | Create a user |
+| GET | `/api/v1/admin/users/` | Admin | List all users |
+| PUT | `/api/v1/admin/users/invitation-key` | Admin | Set or rotate the invitation key |
 | **Devices** |
 | GET | `/api/v1/devices/` | JWT | List the current user's own devices |
-| POST | `/api/v1/devices/` | JWT | Create a device (`fan`/`light`/`camera`) — default feed auto-created |
+| POST | `/api/v1/devices/` | Admin | Create a device (`fan`/`light`/`camera`/`temp_sensor`/`humidity_sensor`) — default feed auto-created |
 | GET | `/api/v1/devices/{id}` | Owner | Read a device |
-| DELETE | `/api/v1/devices/{id}` | Owner | Delete a device (cascades feeds & commands) |
-| POST | `/api/v1/devices/{id}/rotate-key` | Owner | Rotate the device hardware key |
+| DELETE | `/api/v1/devices/{id}` | Admin | Delete a device (cascades feeds & commands) |
+| POST | `/api/v1/devices/{id}/rotate-key` | Admin | Rotate the device hardware key |
 | POST | `/api/v1/devices/{id}/heartbeat` | Device Key | Kit / gateway signals it is online (`X-Device-Key`) |
 | GET | `/api/v1/devices/{id}/commands` | Owner | List commands for a device |
 | POST | `/api/v1/devices/{id}/commands` | JWT | Queue a command for a device |
 | GET | `/api/v1/devices/{id}/commands/pending` | Device Key | Device pulls pending commands (`X-Device-Key`) |
 | PATCH | `/api/v1/devices/{id}/commands/{cid}/ack` | Device Key | Device acknowledges a command (`X-Device-Key`) |
+| GET | `/api/v1/devices/{id}/schedules` | JWT | List device schedules |
+| POST | `/api/v1/devices/{id}/schedules` | Admin | Create a daily schedule for a light |
+| DELETE | `/api/v1/devices/{id}/schedules/{schedule_id}` | Admin | Delete a schedule |
 | **Feeds** |
 | GET | `/api/v1/feeds/` | JWT | List feeds belonging to the current user's devices |
 | POST | `/api/v1/feeds/` | Owner | Create an extra feed for your own device |
@@ -175,13 +184,14 @@ npm test
 | GET | `/api/v1/face/logs` | JWT | List face recognition log entries |
 | **WebSockets** |
 | WS | `/ws/feeds/{id}?token=...` | JWT | Subscribe to live feed value updates |
-| WS | `/ws/devices/{id}?token=...` | JWT | Subscribe to live device events |
+| WS | `/ws/devices/{id}?token=...` | JWT | Subscribe to device events (includes initial history) |
 
 ### IoT Backend Flow
 
-1. On first startup the server automatically creates an admin account (username: `admin`, password: `kiendeptrai`).
-2. Log in with `POST /api/v1/auth/login` and use the returned bearer token for all user APIs.
-3. Any user can create a device (`fan`, `light`, or `camera`) — a default feed is created automatically.
-4. Store the returned device key on the physical kit and publish telemetry via `POST /api/v1/feeds/{id}/ingest`.
-5. Use dashboards, feed history, and WebSocket subscriptions from authenticated frontend users.
-6. For door access, enroll faces via `POST /api/v1/face/enrollments` and submit camera images via `POST /api/v1/face/recognize`.
+1. Register the first admin via `POST /api/v1/auth/register` using `SETUP_CODE`.
+2. As admin, set an invitation key with `PUT /api/v1/admin/users/invitation-key`.
+3. Register users via `POST /api/v1/auth/register` using the invitation key.
+4. Admin creates devices (`fan`, `light`, `camera`, `temp_sensor`, `humidity_sensor`), and the default feed is created automatically.
+5. Devices publish telemetry via `POST /api/v1/feeds/{id}/ingest` with `X-Device-Key`.
+6. Frontend subscribes to `WS /ws/devices/{id}` to receive history and real-time updates.
+7. For door access, enroll faces via `POST /api/v1/face/enrollments` and submit camera images via `POST /api/v1/face/recognize`.

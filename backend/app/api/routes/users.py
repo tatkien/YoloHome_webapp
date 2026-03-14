@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -5,13 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_admin_user
 from app.core.security import hash_secret
 from app.db.session import get_db
+from app.models.invitation_key import InvitationKey
 from app.models.user import User
-from app.schemas.user import UserCreate, UserRead
+from app.schemas.auth import InvitationKeyResponse, InvitationKeyUpdate
+from app.schemas.user import UserRead
 
 router = APIRouter(prefix="/admin/users", tags=["users"])
-
-VALID_ROLES = {"admin", "user"}
-
 
 @router.get("/", response_model=list[UserRead])
 async def list_users(
@@ -22,34 +23,39 @@ async def list_users(
     return result.scalars().all()
 
 
-@router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-async def create_user(
-    payload: UserCreate,
-    _: User = Depends(get_admin_user),
+@router.put("/invitation-key", response_model=InvitationKeyResponse)
+async def set_invitation_key(
+    payload: InvitationKeyUpdate,
+    current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
-    role = payload.role.lower().strip()
-    if role not in VALID_ROLES:
+    key = payload.invitation_key.strip()
+    if not key:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Role must be either 'admin' or 'user'",
+            detail="Invitation key cannot be empty",
         )
 
-    existing_user = await db.execute(sa.select(User).where(User.username == payload.username))
-    if existing_user.scalar_one_or_none() is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Username is already in use",
-        )
-
-    user = User(
-        username=payload.username,
-        full_name=payload.full_name,
-        hashed_password=hash_secret(payload.password),
-        role=role,
-        is_active=payload.is_active,
+    result = await db.execute(
+        sa.select(InvitationKey).order_by(InvitationKey.updated_at.desc())
     )
-    db.add(user)
+    invitation = result.scalars().first()
+    now = datetime.now(timezone.utc)
+    if invitation is None:
+        invitation = InvitationKey(
+            key_hash=hash_secret(key),
+            updated_by_id=current_user.id,
+            updated_at=now,
+        )
+        db.add(invitation)
+    else:
+        invitation.key_hash = hash_secret(key)
+        invitation.updated_by_id = current_user.id
+        invitation.updated_at = now
+
     await db.commit()
-    await db.refresh(user)
-    return user
+    await db.refresh(invitation)
+    return InvitationKeyResponse(
+        updated_at=invitation.updated_at,
+        updated_by_id=invitation.updated_by_id,
+    )
