@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
     SETUP_CODE: str | None = None
 
+    # Face recognition model paths (relative to container or absolute)
+    ARCFACE_MODEL_PATH: str = "/models/arcface_resnet100.onnx"
+    RETINAFACE_MODEL_PATH: str = "/models/det_10g.onnx"
+    FACE_MATCH_THRESHOLD: float = 0.4
+    FACE_DETECTION_THRESHOLD: float = 0.7
+
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def parse_cors_origins(cls, value):

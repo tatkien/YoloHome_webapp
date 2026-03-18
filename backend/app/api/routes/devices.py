@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_admin_user, get_current_user
 from app.core.security import generate_device_key, hash_secret, verify_secret
+from app.db.db_utils import reset_sequence_to_min_gap
 from app.db.session import get_db
 from app.models.command import Command
 from app.models.device import Device
@@ -258,6 +259,7 @@ async def delete_device(
     device = await _get_device_or_404(db, device_id)
     await db.delete(device)
     await db.commit()
+    await reset_sequence_to_min_gap(db, "devices", "devices_id_seq")
 
 
 @router.get("/{device_id}/schedules", response_model=list[DeviceScheduleRead])
