@@ -39,3 +39,15 @@ class FaceRecognitionLogRead(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class FaceRecognizeResult(BaseModel):
+    """Response for the /recognize endpoint after AI inference."""
+    log_id: int
+    status: str                                 # "recognized" | "unknown"
+    confidence: float | None = None
+    matched_enrollment_id: int | None = None
+    matched_name: str | None = None
+    bbox: list[float] | None = None             # [x1, y1, x2, y2]
+    detection_score: float | None = None
+

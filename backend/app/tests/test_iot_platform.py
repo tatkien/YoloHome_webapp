@@ -5,8 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
+from app.core.security import hash_secret
 from app.db.session import Base, get_db
 from app.main import app
+from app.models.user import User
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
@@ -241,3 +243,118 @@ async def test_dashboard_creation_and_widget_assignment(client, admin_headers):
     assert read_response.status_code == 200
     assert len(read_response.json()["widgets"]) == 1
     assert read_response.json()["widgets"][0]["widget_type"] == "toggle"
+
+
+@pytest.mark.asyncio
+async def test_admin_can_delete_regular_user(client, admin_headers):
+    invitation_response = await client.put(
+        "/api/v1/admin/users/invitation-key",
+        headers=admin_headers,
+        json={"invitation_key": _INVITATION_KEY},
+    )
+    assert invitation_response.status_code == 200
+
+    register_response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": "member_to_delete",
+            "password": "secret123",
+            "full_name": "Family Member",
+            "registration_code": _INVITATION_KEY,
+        },
+    )
+    assert register_response.status_code == 201
+    user_id = register_response.json()["user"]["id"]
+
+    delete_response = await client.delete(
+        f"/api/v1/admin/users/{user_id}",
+        headers=admin_headers,
+    )
+    assert delete_response.status_code == 204
+
+    login_response = await client.post(
+        "/api/v1/auth/login",
+        json={"username": "member_to_delete", "password": "secret123"},
+    )
+    assert login_response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_non_admin_cannot_delete_user(client, admin_headers):
+    invitation_response = await client.put(
+        "/api/v1/admin/users/invitation-key",
+        headers=admin_headers,
+        json={"invitation_key": _INVITATION_KEY},
+    )
+    assert invitation_response.status_code == 200
+
+    register_response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": "member_actor",
+            "password": "secret123",
+            "registration_code": _INVITATION_KEY,
+        },
+    )
+    assert register_response.status_code == 201
+    user_token = register_response.json()["access_token"]
+    user_headers = {"Authorization": f"Bearer {user_token}"}
+
+    me_response = await client.get("/api/v1/auth/me", headers=admin_headers)
+    assert me_response.status_code == 200
+    admin_id = me_response.json()["id"]
+
+    delete_response = await client.delete(
+        f"/api/v1/admin/users/{admin_id}",
+        headers=user_headers,
+    )
+    assert delete_response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_delete_self(client, admin_headers, test_db):
+    # Add another active admin so self-delete check is exercised independently
+    test_db.add(
+        User(
+            username="admin2",
+            full_name="Secondary Admin",
+            hashed_password=hash_secret("another-secret"),
+            role="admin",
+            is_active=True,
+        )
+    )
+    await test_db.commit()
+
+    me_response = await client.get("/api/v1/auth/me", headers=admin_headers)
+    assert me_response.status_code == 200
+    admin_id = me_response.json()["id"]
+
+    delete_response = await client.delete(
+        f"/api/v1/admin/users/{admin_id}",
+        headers=admin_headers,
+    )
+    assert delete_response.status_code == 403
+    assert delete_response.json()["detail"] == "Cannot delete your own account"
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_delete_last_active_admin(client, admin_headers):
+    me_response = await client.get("/api/v1/auth/me", headers=admin_headers)
+    assert me_response.status_code == 200
+    admin_id = me_response.json()["id"]
+
+    delete_response = await client.delete(
+        f"/api/v1/admin/users/{admin_id}",
+        headers=admin_headers,
+    )
+    assert delete_response.status_code == 403
+    assert delete_response.json()["detail"] == "Cannot delete the last active admin"
+
+
+@pytest.mark.asyncio
+async def test_delete_unknown_user_returns_404(client, admin_headers):
+    delete_response = await client.delete(
+        "/api/v1/admin/users/99999",
+        headers=admin_headers,
+    )
+    assert delete_response.status_code == 404
