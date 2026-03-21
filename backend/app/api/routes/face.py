@@ -19,7 +19,6 @@ from app.models.face_enrollment import FaceEnrollment
 from app.models.face_recognition_log import FaceRecognitionLog
 from app.models.user import User
 from app.schemas.face import (
-    FaceEnrollmentCreate,
     FaceEnrollmentRead,
     FaceRecognitionLogRead,
     FaceRecognizeResult,
@@ -47,6 +46,26 @@ def _decode_upload(contents: bytes | bytearray) -> np.ndarray:
     return image
 
 
+def _user_display_name(full_name: str | None, username: str | None) -> str | None:
+    if full_name and full_name.strip():
+        return full_name
+    return username
+
+
+def _vector_to_list(vector: list[float] | tuple[float, ...] | np.ndarray | None) -> list[float] | None:
+    if vector is None:
+        return None
+    return [float(v) for v in vector]
+
+
+async def _get_user_or_404(db: AsyncSession, user_id: int) -> User:
+    result = await db.execute(sa.select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return user
+
+
 # ---------------------------------------------------------------------------
 # Enrollment  (register a known face → store its feature vector)
 # ---------------------------------------------------------------------------
@@ -54,40 +73,32 @@ def _decode_upload(contents: bytes | bytearray) -> np.ndarray:
 @router.get("/enrollments", response_model=list[FaceEnrollmentRead])
 async def list_enrollments(
     device_id: int | None = None,
+    user_id: int | None = None,
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    query = sa.select(FaceEnrollment)
+    query = sa.select(FaceEnrollment, User.username, User.full_name).join(
+        User, FaceEnrollment.user_id == User.id, isouter=True
+    )
     if device_id is not None:
         query = query.where(FaceEnrollment.device_id == device_id)
+    if user_id is not None:
+        query = query.where(FaceEnrollment.user_id == user_id)
     result = await db.execute(query.order_by(FaceEnrollment.created_at.desc()))
-    return result.scalars().all()
 
-
-@router.post(
-    "/enrollments",
-    response_model=FaceEnrollmentRead,
-    status_code=status.HTTP_201_CREATED,
-    summary="Register a face by storing its feature vector (JSON)",
-    description=(
-        "Accepts a pre-extracted 512-d feature vector. "
-        "Use POST /enrollments/image to let the server extract the vector from an image."
-    ),
-)
-async def create_enrollment(
-    payload: FaceEnrollmentCreate,
-    _: User = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
-):
-    enrollment = FaceEnrollment(
-        name=payload.name,
-        feature_vector=payload.feature_vector,
-        device_id=payload.device_id,
-    )
-    db.add(enrollment)
-    await db.commit()
-    await db.refresh(enrollment)
-    return enrollment
+    enrollments: list[FaceEnrollmentRead] = []
+    for enrollment, username, full_name in result.all():
+        enrollments.append(
+            FaceEnrollmentRead(
+                id=enrollment.id,
+                user_id=enrollment.user_id,
+                user_name=_user_display_name(full_name, username),
+                feature_vector=_vector_to_list(enrollment.feature_vector) or [],
+                device_id=enrollment.device_id,
+                created_at=enrollment.created_at,
+            )
+        )
+    return enrollments
 
 
 @router.post(
@@ -97,17 +108,19 @@ async def create_enrollment(
     summary="Register a face from an uploaded image",
     description=(
         "Upload a JPEG/PNG/WebP photo. The server detects the face with RetinaFace, "
-        "aligns it, extracts the 512-d ArcFace embedding, and stores the enrollment."
+        "aligns it, extracts the 512-d ArcFace embedding, and stores it for the provided user_id."
     ),
 )
 async def create_enrollment_from_image(
     image: UploadFile = File(..., description="Photo containing the face to enroll"),
-    name: str = Form(..., description="Name of the person"),
+    user_id: int = Form(..., description="ID of the registered user"),
     device_id: int | None = Form(default=None, description="Optional device scope"),
     _: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
     face_service: FaceService = Depends(get_face_service),
 ):
+    user = await _get_user_or_404(db, user_id)
+
     if image.content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
@@ -125,17 +138,24 @@ async def create_enrollment_from_image(
         )
 
     # Use the highest-confidence face
-    bbox, embedding, score = results[0]
+    _, embedding, _ = results[0]
 
     enrollment = FaceEnrollment(
-        name=name,
+        user_id=user_id,
         feature_vector=embedding.tolist(),
         device_id=device_id,
     )
     db.add(enrollment)
     await db.commit()
     await db.refresh(enrollment)
-    return enrollment
+    return FaceEnrollmentRead(
+        id=enrollment.id,
+        user_id=enrollment.user_id,
+        user_name=_user_display_name(user.full_name, user.username),
+        feature_vector=_vector_to_list(enrollment.feature_vector) or [],
+        device_id=enrollment.device_id,
+        created_at=enrollment.created_at,
+    )
 
 
 @router.delete("/enrollments/{enrollment_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -257,7 +277,8 @@ async def recognize_face(
 
     # --- Match against enrolled faces via pgvector cosine distance ---
     matched_enrollment_id = None
-    matched_name = None
+    matched_user_id = None
+    matched_user_name = None
     confidence = None
     rec_status = "unknown"
 
@@ -267,9 +288,11 @@ async def recognize_face(
 
     match_query = sa.select(
         FaceEnrollment.id,
-        FaceEnrollment.name,
+        FaceEnrollment.user_id,
+        User.username,
+        User.full_name,
         cosine_dist_col.label("distance"),
-    )
+    ).join(User, FaceEnrollment.user_id == User.id, isouter=True)
     if device_id is not None:
         match_query = match_query.where(
             sa.or_(
@@ -286,7 +309,8 @@ async def recognize_face(
         similarity = float(1.0 - best_match.distance)
         if similarity >= settings.FACE_MATCH_THRESHOLD:
             matched_enrollment_id = best_match.id
-            matched_name = best_match.name
+            matched_user_id = best_match.user_id
+            matched_user_name = _user_display_name(best_match.full_name, best_match.username)
             confidence = round(similarity, 4)
             rec_status = "recognized"
         else:
@@ -298,6 +322,7 @@ async def recognize_face(
         image_path=image_path,
         feature_vector=embedding_list,
         matched_enrollment_id=matched_enrollment_id,
+        matched_user_id=matched_user_id,
         confidence=confidence,
         status=rec_status,
     )
@@ -310,7 +335,8 @@ async def recognize_face(
         status=rec_status,
         confidence=confidence,
         matched_enrollment_id=matched_enrollment_id,
-        matched_name=matched_name,
+        matched_user_id=matched_user_id,
+        matched_user_name=matched_user_name,
         bbox=bbox.tolist(),
         detection_score=round(float(det_score), 4),
     )
@@ -323,10 +349,29 @@ async def list_recognition_logs(
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    query = sa.select(FaceRecognitionLog)
+    query = sa.select(FaceRecognitionLog, User.username, User.full_name).join(
+        User, FaceRecognitionLog.matched_user_id == User.id, isouter=True
+    )
     if device_id is not None:
         query = query.where(FaceRecognitionLog.device_id == device_id)
     result = await db.execute(
         query.order_by(FaceRecognitionLog.created_at.desc()).limit(limit)
     )
-    return result.scalars().all()
+
+    logs: list[FaceRecognitionLogRead] = []
+    for log, username, full_name in result.all():
+        logs.append(
+            FaceRecognitionLogRead(
+                id=log.id,
+                device_id=log.device_id,
+                image_path=log.image_path,
+                feature_vector=_vector_to_list(log.feature_vector),
+                matched_enrollment_id=log.matched_enrollment_id,
+                matched_user_id=log.matched_user_id,
+                matched_user_name=_user_display_name(full_name, username),
+                confidence=log.confidence,
+                status=log.status,
+                created_at=log.created_at,
+            )
+        )
+    return logs

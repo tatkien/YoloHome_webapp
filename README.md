@@ -178,9 +178,9 @@ npm test
 | POST | `/api/v1/dashboards/{id}/widgets` | JWT | Add a widget to a dashboard |
 | **Face Recognition** |
 | GET | `/api/v1/face/enrollments` | JWT | List enrolled faces |
-| POST | `/api/v1/face/enrollments` | Admin | Register a face (store feature vector + name) |
+| POST | `/api/v1/face/enrollments/image` | Admin | Upload one image and enroll face for a registered user_id |
 | DELETE | `/api/v1/face/enrollments/{id}` | Admin | Delete an enrolled face |
-| POST | `/api/v1/face/recognize` | Device Key | Camera submits image for recognition (saves image, creates log) |
+| POST | `/api/v1/face/recognize` | Device Key | Camera submits image for recognition (returns matched_user_id/matched_user_name when recognized) |
 | GET | `/api/v1/face/logs` | JWT | List face recognition log entries |
 | **WebSockets** |
 | WS | `/ws/feeds/{id}?token=...` | JWT | Subscribe to live feed value updates |
@@ -194,4 +194,4 @@ npm test
 4. Admin creates devices (`fan`, `light`, `camera`, `temp_sensor`, `humidity_sensor`), and the default feed is created automatically.
 5. Devices publish telemetry via `POST /api/v1/feeds/{id}/ingest` with `X-Device-Key`.
 6. Frontend subscribes to `WS /ws/devices/{id}` to receive history and real-time updates.
-7. For door access, enroll faces via `POST /api/v1/face/enrollments` and submit camera images via `POST /api/v1/face/recognize`.
+7. For door access, admins select a registered user from `GET /api/v1/admin/users/`, enroll via `POST /api/v1/face/enrollments/image`, and submit camera images via `POST /api/v1/face/recognize`.

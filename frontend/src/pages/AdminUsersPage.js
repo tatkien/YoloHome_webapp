@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Container, Table, Button, Form, Alert, Spinner, Row, Col, InputGroup } from 'react-bootstrap';
+import { Container, Table, Button, Form, Alert, Spinner, InputGroup } from 'react-bootstrap';
 import api from '../services/api';
 
 export default function AdminUsersPage() {

@@ -21,6 +21,10 @@ class FaceRecognitionLog(Base):
     matched_enrollment_id = sa.Column(
         sa.Integer, sa.ForeignKey("face_enrollments.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # User matched by the AI model (denormalized for faster UI/API reads)
+    matched_user_id = sa.Column(
+        sa.Integer, sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     # Similarity confidence score 0.0 - 1.0 (null until model is integrated)
     confidence = sa.Column(sa.Float, nullable=True)
     # pending: AI not run yet | recognized: match found | unknown: no match
