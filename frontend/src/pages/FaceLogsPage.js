@@ -105,7 +105,8 @@ export default function FaceLogsPage() {
                   <th>ID</th>
                   <th>Status</th>
                   <th>Confidence</th>
-                  <th>Matched ID</th>
+                  <th>Matched Enrollment</th>
+                  <th>Matched User</th>
                   <th>Device</th>
                   <th>Vector</th>
                   <th>Timestamp</th>
@@ -139,6 +140,16 @@ export default function FaceLogsPage() {
                         ? <span style={{ fontWeight: 600 }}>#{log.matched_enrollment_id}</span>
                         : <span style={{ color: 'var(--text-muted)' }}>—</span>
                       }
+                    </td>
+                    <td>
+                      {log.matched_user_id ? (
+                        <span style={{ fontWeight: 600 }}>
+                          {log.matched_user_name || `User #${log.matched_user_id}`}
+                          <small style={{ color: 'var(--text-muted)', marginLeft: '0.4rem' }}>#{log.matched_user_id}</small>
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--text-muted)' }}>—</span>
+                      )}
                     </td>
                     <td>{log.device_id ?? <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
                     <td>

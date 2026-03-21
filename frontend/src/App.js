@@ -27,8 +27,8 @@ function App() {
           <Route path="/devices" element={<PrivateRoute><DevicesPage /></PrivateRoute>} />
 
           {/* Face Recognition */}
-          <Route path="/face/enrollments" element={<PrivateRoute><FaceEnrollmentsPage /></PrivateRoute>} />
-          <Route path="/face/recognize" element={<PrivateRoute><FaceRecognizePage /></PrivateRoute>} />
+          <Route path="/face/enrollments" element={<PrivateRoute adminOnly><FaceEnrollmentsPage /></PrivateRoute>} />
+          <Route path="/face/recognize" element={<FaceRecognizePage />} />
           <Route path="/face/logs" element={<PrivateRoute><FaceLogsPage /></PrivateRoute>} />
 
           {/* Admin */}

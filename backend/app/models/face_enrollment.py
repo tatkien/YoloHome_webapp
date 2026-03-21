@@ -10,8 +10,10 @@ class FaceEnrollment(Base):
     __tablename__ = "face_enrollments"
 
     id = sa.Column(sa.Integer, primary_key=True, index=True)
-    # Name identifying whose face this vector belongs to
-    name = sa.Column(sa.String(255), nullable=False)
+    # Registered user that this face embedding belongs to
+    user_id = sa.Column(
+        sa.Integer, sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     # ArcFace 512-d feature vector — stored as pgvector for cosine similarity search
     feature_vector = sa.Column(Vector(VECTOR_DIM), nullable=False)
     # Optionally scope to a specific door-camera device

@@ -8,12 +8,12 @@ export default function HomePage() {
 
   const quickLinks = [
     { to: '/devices', icon: '📡', title: 'Devices', desc: 'Manage your smart home devices', color: '#4c7ef3' },
-    { to: '/face/enrollments', icon: '🧑', title: 'Enrollments', desc: 'Register faces for recognition', color: '#a78bfa' },
     { to: '/face/recognize', icon: '🔍', title: 'Recognize', desc: 'Test face recognition AI', color: '#34d399' },
     { to: '/face/logs', icon: '📋', title: 'Logs', desc: 'View recognition history', color: '#fbbf24' },
   ];
 
   if (isAdmin) {
+    quickLinks.push({ to: '/face/enrollments', icon: '🧑', title: 'Enrollments', desc: 'Register faces for recognition', color: '#a78bfa' });
     quickLinks.push({ to: '/admin/users', icon: '👑', title: 'Admin', desc: 'Manage users & invitation keys', color: '#f87171' });
   }
 

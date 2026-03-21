@@ -138,10 +138,10 @@ class FaceService:
             det.bbox /= det_scale
             det.landmarks /= det_scale
 
-        # NMS
         if not detections:
             return []
 
+        # NMS on original image coordinates
         bboxes = np.array([d.bbox for d in detections])
         scores = np.array([d.score for d in detections])
         indices = self._nms(bboxes, scores, nms_threshold)

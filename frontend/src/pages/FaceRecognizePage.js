@@ -2,15 +2,34 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Container, Row, Col, Form, Button, Alert, Spinner } from 'react-bootstrap';
 import api from '../services/api';
 
+const MAX_FRAMES_PER_ATTEMPT = 3;
+const WARMUP_MS = 1000;
+const FRAME_INTERVAL_MS = 180;
+const MAX_FAILED_ATTEMPTS = 3;
+const ATTEMPT_RETRY_MS = 1000;
+
+const sleep = (ms) => new Promise((resolve) => {
+  window.setTimeout(resolve, ms);
+});
+
 export default function FaceRecognizePage() {
-  const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [deviceId, setDeviceId] = useState('');
   const [deviceKey, setDeviceKey] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
-  const fileInputRef = useRef(null);
+  const [cameraOn, setCameraOn] = useState(false);
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [phaseText, setPhaseText] = useState('Camera is off');
+  const [currentFrame, setCurrentFrame] = useState(0);
+  const [cameraPermissionDenied, setCameraPermissionDenied] = useState(false);
+
+  const isLocked = failedAttempts >= MAX_FAILED_ATTEMPTS;
+
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const captureCanvasRef = useRef(null);
   const canvasRef = useRef(null);
   const imgRef = useRef(null);
 
@@ -36,8 +55,8 @@ export default function FaceRecognizePage() {
       ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
 
       // Label
-      const label = result.matched_name
-        ? `${result.matched_name} (${((result.confidence || 0) * 100).toFixed(1)}%)`
+      const label = result.matched_user_name
+        ? `${result.matched_user_name} (${((result.confidence || 0) * 100).toFixed(1)}%)`
         : `Face (${((result.detection_score || 0) * 100).toFixed(1)}%)`;
       const fontSize = Math.max(14, Math.round(img.naturalWidth / 40));
       ctx.font = `bold ${fontSize}px sans-serif`;
@@ -55,87 +74,224 @@ export default function FaceRecognizePage() {
     drawCanvas();
   }, [preview, result, drawCanvas]);
 
-  const handleFileChange = (e) => {
-    const f = e.target.files[0];
-    if (f) {
-      setFile(f);
-      setResult(null);
-      const reader = new FileReader();
-      reader.onload = (ev) => setPreview(ev.target.result);
-      reader.readAsDataURL(f);
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
     }
-  };
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraOn(false);
+    setPhaseText('Camera is off');
+  }, []);
+
+  useEffect(() => () => {
+    stopCamera();
+  }, [stopCamera]);
+
+  const startCamera = useCallback(async () => {
+    if (streamRef.current) {
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          facingMode: 'user',
+        },
+        audio: false,
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await new Promise((resolve) => {
+          videoRef.current.onloadedmetadata = () => {
+            resolve();
+          };
+        });
+        await videoRef.current.play();
+      }
+      setCameraPermissionDenied(false);
+      setCameraOn(true);
+      setPhaseText('Camera ready');
+    } catch (err) {
+      setCameraPermissionDenied(true);
+      setError('Camera access was denied. Please allow camera permission and try again.');
+      throw err;
+    }
+  }, []);
+
+  const captureCurrentFrame = useCallback(async () => {
+    const video = videoRef.current;
+    const canvas = captureCanvasRef.current;
+    if (!video || !canvas || !video.videoWidth || !video.videoHeight) {
+      throw new Error('Camera frame is not ready yet');
+    }
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob((b) => {
+        if (!b) {
+          reject(new Error('Unable to capture camera frame'));
+          return;
+        }
+        resolve(b);
+      }, 'image/jpeg', 0.72);
+    });
+
+    return { blob, dataUrl };
+  }, []);
+
+  const submitFrame = useCallback(async (blob, index) => {
+    const formData = new FormData();
+    formData.append('image', blob, `frame-${index}.jpg`);
+    if (deviceId) formData.append('device_id', deviceId);
+
+    const headers = { 'Content-Type': 'multipart/form-data' };
+    if (deviceKey) headers['X-Device-Key'] = deviceKey;
+
+    const res = await api.post('/face/recognize', formData, { headers });
+    return res.data;
+  }, [deviceId, deviceKey]);
 
   const handleRecognize = async (e) => {
     e.preventDefault();
-    if (!file) return;
+    if (isLocked) {
+      setError('Maximum failed tries reached. Camera has been stopped for this session.');
+      return;
+    }
+
     setError('');
     setLoading(true);
     setResult(null);
+    setCurrentFrame(0);
+
     try {
-      const formData = new FormData();
-      formData.append('image', file);
-      if (deviceId) formData.append('device_id', deviceId);
+      if (!streamRef.current) {
+        setPhaseText('Opening camera...');
+        await startCamera();
+      }
 
-      const headers = { 'Content-Type': 'multipart/form-data' };
-      if (deviceKey) headers['X-Device-Key'] = deviceKey;
+      setPhaseText(`Warming up camera for ${WARMUP_MS / 1000}s...`);
+      await sleep(WARMUP_MS);
 
-      const res = await api.post('/face/recognize', formData, { headers });
-      setResult(res.data);
+      let consecutiveFails = failedAttempts;
+      let attemptNo = 0;
+      let recognized = null;
+
+      while (!recognized && consecutiveFails < MAX_FAILED_ATTEMPTS) {
+        attemptNo += 1;
+        let lastResponse = null;
+
+        for (let i = 1; i <= MAX_FRAMES_PER_ATTEMPT; i += 1) {
+          setCurrentFrame(i);
+          setPhaseText(`Attempt ${attemptNo}: capturing frame ${i}/${MAX_FRAMES_PER_ATTEMPT}...`);
+          const { blob, dataUrl } = await captureCurrentFrame();
+          setPreview(dataUrl);
+
+          setPhaseText(`Attempt ${attemptNo}: sending frame ${i}/${MAX_FRAMES_PER_ATTEMPT}...`);
+          const response = await submitFrame(blob, i);
+          lastResponse = response;
+
+          if (response.status === 'recognized') {
+            recognized = response;
+            setPhaseText(`Recognized on attempt ${attemptNo}, frame ${i}. Early stop applied.`);
+            break;
+          }
+
+          if (i < MAX_FRAMES_PER_ATTEMPT) {
+            await sleep(FRAME_INTERVAL_MS);
+          }
+        }
+
+        if (recognized) {
+          setResult(recognized);
+          setFailedAttempts(0);
+          stopCamera();
+          setPhaseText('Recognized. Camera turned off.');
+          break;
+        }
+
+        consecutiveFails += 1;
+        setResult(lastResponse);
+        setFailedAttempts(consecutiveFails);
+
+        if (consecutiveFails >= MAX_FAILED_ATTEMPTS) {
+          setPhaseText('No match after maximum failed attempts. Camera turned off.');
+          stopCamera();
+          setError('Maximum failed tries reached. Camera has been turned off.');
+          break;
+        }
+
+        setPhaseText(`Attempt ${attemptNo} failed. Waiting ${ATTEMPT_RETRY_MS / 1000}s before retry...`);
+        await sleep(ATTEMPT_RETRY_MS);
+      }
     } catch (err) {
       setError(err.response?.data?.detail || 'Recognition failed');
     } finally {
       setLoading(false);
+      setCurrentFrame(0);
     }
   };
 
   const reset = () => {
-    setFile(null);
     setPreview(null);
     setResult(null);
     setError('');
+    setPhaseText(cameraOn ? 'Camera ready' : 'Camera is off');
+    setFailedAttempts(0);
+    setCurrentFrame(0);
+    if (cameraOn) {
+      stopCamera();
+    }
   };
 
   return (
     <Container className="py-4 fade-in">
       <div className="page-header">
         <h1>🔍 Face Recognition</h1>
-        <p>Upload an image to identify a person against enrolled faces</p>
+        <p>Click recognize to open webcam, warm up 1 second, and evaluate up to 3 frames</p>
       </div>
 
       {error && <Alert variant="danger" dismissible onClose={() => setError('')}>{error}</Alert>}
 
       <Row className="g-4">
-        {/* Upload panel */}
+        {/* Camera panel */}
         <Col lg={6}>
           <div className="yh-card p-4">
-            <h5 style={{ fontWeight: 600, marginBottom: '1rem' }}>Upload Image</h5>
+            <h5 style={{ fontWeight: 600, marginBottom: '1rem' }}>Live Camera Demo</h5>
             <Form onSubmit={handleRecognize}>
-              <div
-                className={`file-upload-zone mb-3 ${file ? 'has-file' : ''}`}
-                onClick={() => fileInputRef.current.click()}
-              >
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={handleFileChange}
-                  style={{ display: 'none' }}
+              <div className="file-upload-zone mb-3" style={{ padding: '0.75rem' }}>
+                <video
+                  ref={videoRef}
+                  muted
+                  autoPlay
+                  playsInline
+                  style={{
+                    width: '100%',
+                    maxHeight: '280px',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'var(--bg-input)',
+                    objectFit: 'cover',
+                  }}
                 />
-                {file ? (
-                  <div>
-                    <div style={{ color: 'var(--accent-green)', fontWeight: 600 }}>✓ {file.name}</div>
-                    <small style={{ color: 'var(--text-muted)' }}>
-                      {(file.size / 1024).toFixed(1)} KB — click to change
-                    </small>
-                  </div>
-                ) : (
-                  <div>
-                    <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>📸</div>
-                    <div style={{ color: 'var(--text-secondary)' }}>Click to select image</div>
-                    <small style={{ color: 'var(--text-muted)' }}>JPEG, PNG, or WebP</small>
-                  </div>
-                )}
+                <canvas ref={captureCanvasRef} style={{ display: 'none' }} />
+              </div>
+
+              <div style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                {phaseText}
+                {currentFrame > 0 ? ` (frame ${currentFrame}/${MAX_FRAMES_PER_ATTEMPT})` : ''}
+              </div>
+
+              <div style={{ marginBottom: '1rem', color: isLocked ? 'var(--accent-red)' : 'var(--text-muted)', fontSize: '0.85rem' }}>
+                Failed attempts: {failedAttempts}/{MAX_FAILED_ATTEMPTS}
               </div>
 
               <Row className="mb-3">
@@ -160,11 +316,25 @@ export default function FaceRecognizePage() {
               </Row>
 
               <div className="d-flex gap-2">
-                <Button type="submit" disabled={loading || !file} className="flex-grow-1">
-                  {loading ? <><Spinner size="sm" animation="border" /> Recognizing...</> : '🔍 Recognize'}
+                <Button type="submit" disabled={loading || isLocked} className="flex-grow-1">
+                  {loading ? <><Spinner size="sm" animation="border" /> Recognizing...</> : '🔍 Recognize (Webcam)'}
+                </Button>
+                <Button
+                  variant="outline-light"
+                  onClick={cameraOn ? stopCamera : startCamera}
+                  type="button"
+                  disabled={loading || isLocked}
+                >
+                  {cameraOn ? 'Stop Camera' : 'Start Camera'}
                 </Button>
                 <Button variant="outline-light" onClick={reset}>Reset</Button>
               </div>
+
+              {cameraPermissionDenied && (
+                <div style={{ marginTop: '0.75rem', color: 'var(--accent-yellow)', fontSize: '0.85rem' }}>
+                  Browser blocked camera access. Allow permission and retry.
+                </div>
+              )}
             </Form>
           </div>
         </Col>
@@ -218,12 +388,19 @@ export default function FaceRecognizePage() {
                   <div style={{ fontWeight: 600 }}>#{result.log_id}</div>
                 </Col>
 
-                {result.matched_name && (
+                {result.matched_user_name && (
                   <Col xs={6}>
-                    <div className="stat-label">Matched Person</div>
+                    <div className="stat-label">Matched User</div>
                     <div style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--accent-green)' }}>
-                      {result.matched_name}
+                      {result.matched_user_name}
                     </div>
+                  </Col>
+                )}
+
+                {result.matched_user_id && (
+                  <Col xs={6}>
+                    <div className="stat-label">Matched User ID</div>
+                    <div style={{ fontWeight: 600 }}>#{result.matched_user_id}</div>
                   </Col>
                 )}
 

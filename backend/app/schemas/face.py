@@ -6,16 +6,10 @@ from pydantic import BaseModel, ConfigDict
 # ---------------------------------------------------------------------------
 # Face enrollment  (register a known face by storing its feature vector)
 # ---------------------------------------------------------------------------
-
-class FaceEnrollmentCreate(BaseModel):
-    name: str                       # whose face this is, e.g. "Alice"
-    feature_vector: list[float]     # extracted by the AI model before sending
-    device_id: int | None = None    # optional: scope to one door-camera device
-
-
 class FaceEnrollmentRead(BaseModel):
     id: int
-    name: str
+    user_id: int
+    user_name: str | None = None
     feature_vector: list[float]
     device_id: int | None = None
     created_at: datetime
@@ -33,6 +27,8 @@ class FaceRecognitionLogRead(BaseModel):
     image_path: str | None = None
     feature_vector: list[float] | None = None
     matched_enrollment_id: int | None = None
+    matched_user_id: int | None = None
+    matched_user_name: str | None = None
     confidence: float | None = None
     # pending: AI not run yet | recognized: match found | unknown: no match
     status: str
@@ -47,7 +43,8 @@ class FaceRecognizeResult(BaseModel):
     status: str                                 # "recognized" | "unknown"
     confidence: float | None = None
     matched_enrollment_id: int | None = None
-    matched_name: str | None = None
+    matched_user_id: int | None = None
+    matched_user_name: str | None = None
     bbox: list[float] | None = None             # [x1, y1, x2, y2]
     detection_score: float | None = None
 

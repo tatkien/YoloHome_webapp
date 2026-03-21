@@ -6,14 +6,16 @@ import api from '../services/api';
 
 export default function FaceEnrollmentsPage() {
   const [enrollments, setEnrollments] = useState([]);
+  const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [usersLoading, setUsersLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [filterDeviceId, setFilterDeviceId] = useState('');
 
   // Enroll modal
   const [showEnroll, setShowEnroll] = useState(false);
-  const [enrollName, setEnrollName] = useState('');
+  const [enrollUserId, setEnrollUserId] = useState('');
   const [enrollDeviceId, setEnrollDeviceId] = useState('');
   const [enrollFile, setEnrollFile] = useState(null);
   const [enrollPreview, setEnrollPreview] = useState(null);
@@ -34,7 +36,20 @@ export default function FaceEnrollmentsPage() {
     }
   }, [filterDeviceId]);
 
+  const fetchUsers = useCallback(async () => {
+    try {
+      setUsersLoading(true);
+      const res = await api.get('/admin/users/');
+      setUsers(res.data);
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to load users');
+    } finally {
+      setUsersLoading(false);
+    }
+  }, []);
+
   useEffect(() => { fetchEnrollments(); }, [fetchEnrollments]);
+  useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
@@ -48,6 +63,10 @@ export default function FaceEnrollmentsPage() {
 
   const handleEnroll = async (e) => {
     e.preventDefault();
+    if (!enrollUserId) {
+      setError('Please select a registered user');
+      return;
+    }
     if (!enrollFile) {
       setError('Please select an image file');
       return;
@@ -57,13 +76,15 @@ export default function FaceEnrollmentsPage() {
     try {
       const formData = new FormData();
       formData.append('image', enrollFile);
-      formData.append('name', enrollName);
+      formData.append('user_id', enrollUserId);
       if (enrollDeviceId) formData.append('device_id', enrollDeviceId);
 
       await api.post('/face/enrollments/image', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      setSuccess(`Face enrolled for "${enrollName}"`);
+      const selectedUser = users.find((u) => String(u.id) === String(enrollUserId));
+      const userLabel = selectedUser?.full_name || selectedUser?.username || `User #${enrollUserId}`;
+      setSuccess(`Face enrolled for "${userLabel}"`);
       setShowEnroll(false);
       resetEnrollForm();
       fetchEnrollments();
@@ -89,10 +110,13 @@ export default function FaceEnrollmentsPage() {
   };
 
   const resetEnrollForm = () => {
-    setEnrollName('');
+    setEnrollUserId('');
     setEnrollDeviceId('');
     setEnrollFile(null);
     setEnrollPreview(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   return (
@@ -145,7 +169,7 @@ export default function FaceEnrollmentsPage() {
               <thead>
                 <tr>
                   <th>ID</th>
-                  <th>Name</th>
+                  <th>User</th>
                   <th>Device</th>
                   <th>Vector Dim</th>
                   <th>Created</th>
@@ -156,7 +180,12 @@ export default function FaceEnrollmentsPage() {
                 {enrollments.map((e) => (
                   <tr key={e.id}>
                     <td>{e.id}</td>
-                    <td style={{ fontWeight: 600 }}>{e.name}</td>
+                    <td style={{ fontWeight: 600 }}>
+                      {e.user_name || `User #${e.user_id}`}
+                      {e.user_id ? (
+                        <small style={{ color: 'var(--text-muted)', marginLeft: '0.4rem' }}>#{e.user_id}</small>
+                      ) : null}
+                    </td>
                     <td>{e.device_id ?? <span style={{ color: 'var(--text-muted)' }}>Global</span>}</td>
                     <td>
                       <span className="badge-device">{e.feature_vector?.length || 0}d</span>
@@ -165,7 +194,11 @@ export default function FaceEnrollmentsPage() {
                       {new Date(e.created_at).toLocaleString()}
                     </td>
                     <td>
-                      <Button variant="danger" size="sm" onClick={() => handleDelete(e.id, e.name)}>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => handleDelete(e.id, e.user_name || `User #${e.user_id}`)}
+                      >
                         Delete
                       </Button>
                     </td>
@@ -187,15 +220,24 @@ export default function FaceEnrollmentsPage() {
             <Row>
               <Col md={6}>
                 <Form.Group className="mb-3">
-                  <Form.Label>Person's Name</Form.Label>
-                  <Form.Control
-                    type="text"
-                    placeholder="e.g. Alice"
-                    value={enrollName}
-                    onChange={(e) => setEnrollName(e.target.value)}
+                  <Form.Label>Registered User</Form.Label>
+                  <Form.Select
+                    value={enrollUserId}
+                    onChange={(e) => setEnrollUserId(e.target.value)}
                     required
                     autoFocus
-                  />
+                    disabled={usersLoading}
+                  >
+                    <option value="">Select a user</option>
+                    {users.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.full_name || u.username} (#{u.id})
+                      </option>
+                    ))}
+                  </Form.Select>
+                  {usersLoading && (
+                    <small style={{ color: 'var(--text-muted)' }}>Loading users...</small>
+                  )}
                 </Form.Group>
                 <Form.Group className="mb-3">
                   <Form.Label>Device ID <small style={{ color: 'var(--text-muted)' }}>(optional)</small></Form.Label>
@@ -269,7 +311,7 @@ export default function FaceEnrollmentsPage() {
             <Button variant="outline-light" onClick={() => { setShowEnroll(false); resetEnrollForm(); }}>
               Cancel
             </Button>
-            <Button type="submit" disabled={enrollLoading || !enrollFile}>
+            <Button type="submit" disabled={enrollLoading || !enrollFile || !enrollUserId}>
               {enrollLoading ? <Spinner size="sm" animation="border" /> : 'Enroll Face'}
             </Button>
           </Modal.Footer>
