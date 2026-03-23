@@ -320,7 +320,6 @@ async def recognize_face(
     log = FaceRecognitionLog(
         device_id=device_id,
         image_path=image_path,
-        feature_vector=embedding_list,
         matched_enrollment_id=matched_enrollment_id,
         matched_user_id=matched_user_id,
         confidence=confidence,
@@ -365,7 +364,6 @@ async def list_recognition_logs(
                 id=log.id,
                 device_id=log.device_id,
                 image_path=log.image_path,
-                feature_vector=_vector_to_list(log.feature_vector),
                 matched_enrollment_id=log.matched_enrollment_id,
                 matched_user_id=log.matched_user_id,
                 matched_user_name=_user_display_name(full_name, username),

@@ -25,7 +25,6 @@ class FaceRecognitionLogRead(BaseModel):
     id: int
     device_id: int | None = None
     image_path: str | None = None
-    feature_vector: list[float] | None = None
     matched_enrollment_id: int | None = None
     matched_user_id: int | None = None
     matched_user_name: str | None = None
