@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from functools import lru_cache
 
 import cv2
 import numpy as np
@@ -359,14 +358,28 @@ class FaceService:
 
 
 # ---------------------------------------------------------------------------
-# FastAPI dependency — lazy singleton
+# FastAPI dependency — process-wide singleton
 # ---------------------------------------------------------------------------
 _face_service: FaceService | None = None
 
 
 def get_face_service() -> FaceService:
-    """Return the global ``FaceService`` singleton (created on first call)."""
+    """Return the global ``FaceService`` singleton."""
+    """Create and return the global ``FaceService`` singleton.
+
+    This helper exists so application startup can eagerly load ONNX models
+    and fail fast if model files are missing or invalid.
+    """
     global _face_service
     if _face_service is None:
-        _face_service = FaceService()
+        logger.info(
+            "Initializing FaceService with RETINAFACE_MODEL_PATH=%s ARCFACE_MODEL_PATH=%s",
+            settings.RETINAFACE_MODEL_PATH,
+            settings.ARCFACE_MODEL_PATH,
+        )
+        try:
+            _face_service = FaceService()
+        except Exception:
+            logger.exception("FaceService initialization failed")
+            raise
     return _face_service

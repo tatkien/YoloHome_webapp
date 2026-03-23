@@ -6,11 +6,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.core.config import settings
+from app.core.face_service import get_face_service
 from app.realtime.scheduler import run_device_schedule_loop
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    get_face_service()
     stop_event = asyncio.Event()
     task = asyncio.create_task(run_device_schedule_loop(stop_event))
     try:

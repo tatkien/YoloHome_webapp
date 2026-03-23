@@ -108,7 +108,6 @@ export default function FaceLogsPage() {
                   <th>Matched Enrollment</th>
                   <th>Matched User</th>
                   <th>Device</th>
-                  <th>Vector</th>
                   <th>Timestamp</th>
                 </tr>
               </thead>
@@ -152,12 +151,6 @@ export default function FaceLogsPage() {
                       )}
                     </td>
                     <td>{log.device_id ?? <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
-                    <td>
-                      {log.feature_vector
-                        ? <span className="badge-device">{log.feature_vector.length}d</span>
-                        : <span style={{ color: 'var(--text-muted)' }}>—</span>
-                      }
-                    </td>
                     <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                       {new Date(log.created_at).toLocaleString()}
                     </td>

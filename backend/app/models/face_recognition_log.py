@@ -1,8 +1,6 @@
 import sqlalchemy as sa
-from pgvector.sqlalchemy import Vector
 
 from app.db.session import Base
-from app.models.face_enrollment import VECTOR_DIM
 
 
 class FaceRecognitionLog(Base):
@@ -15,8 +13,6 @@ class FaceRecognitionLog(Base):
     )
     # Path to the saved image file on disk
     image_path = sa.Column(sa.String(512), nullable=True)
-    # ArcFace 512-d feature vector extracted from submitted image (null until model runs)
-    feature_vector = sa.Column(Vector(VECTOR_DIM), nullable=True)
     # Enrollment record matched by the AI model (null = unknown / pending)
     matched_enrollment_id = sa.Column(
         sa.Integer, sa.ForeignKey("face_enrollments.id", ondelete="SET NULL"), nullable=True, index=True
