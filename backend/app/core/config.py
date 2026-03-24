@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # Face recognition model paths (relative to container or absolute)
     ARCFACE_MODEL_PATH: str = "/models/arcface_resnet100.onnx"
     RETINAFACE_MODEL_PATH: str = "/models/det_10g.onnx"
+    ANTISPOOF_MODEL_PATH: str = "/models/MiniFASNetV2.onnx"
+    ANTISPOOF_SCALE: float = 2.7
+    ANTISPOOF_THRESHOLD: float = 0.9
     FACE_MATCH_THRESHOLD: float = 0.4
     FACE_DETECTION_THRESHOLD: float = 0.7
 

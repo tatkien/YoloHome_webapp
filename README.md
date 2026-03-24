@@ -66,6 +66,50 @@ Open **http://localhost:3000** in your browser.
 
 ---
 
+## Face Recognition Model Setup (Required)
+
+Before using face enrollment or face recognition from the web UI, download and prepare the model files in `models/`.
+
+Runtime-required files:
+- `models/arcface_resnet100.onnx`
+- `models/det_10g.onnx`
+
+Preparation-only file (used by `prepare.py` to export ArcFace ONNX):
+- `models/model_weights/ms1mv3_arcface_r100_fp16.pth`
+
+### One-time model download and export
+
+```bash
+cd models
+
+# Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+
+# Install model tooling dependencies
+pip install -r requirements.txt
+
+# Download weights and detector, then export ArcFace ONNX
+python prepare.py
+```
+
+After this finishes, verify these files exist:
+
+```bash
+models/arcface_resnet100.onnx
+models/det_10g.onnx
+```
+
+Optional check (only needed if you plan to re-run model export):
+
+```bash
+models/model_weights/ms1mv3_arcface_r100_fp16.pth
+```
+
+If runtime files are missing, face enrollment/recognition endpoints and web pages will not work correctly.
+
+---
+
 ## Local Development (without Docker)
 
 ### Backend

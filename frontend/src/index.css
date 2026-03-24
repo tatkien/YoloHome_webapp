@@ -212,6 +212,15 @@ code {
   font-size: 0.8rem;
 }
 
+.badge-spoof {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--accent-red);
+  padding: 0.35rem 0.75rem;
+  border-radius: 20px;
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+
 .badge-admin {
   background: rgba(167, 139, 250, 0.15);
   color: var(--accent-purple);
@@ -365,6 +374,11 @@ code {
 .result-card.unknown {
   border-color: var(--accent-yellow);
   box-shadow: 0 0 20px rgba(251, 191, 36, 0.1);
+}
+
+.result-card.spoof {
+  border-color: var(--accent-red);
+  box-shadow: 0 0 20px rgba(248, 113, 113, 0.12);
 }
 
 /* Stat value */
