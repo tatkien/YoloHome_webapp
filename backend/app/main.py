@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,12 +8,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import api_router
 from app.service.mqtt import mqtt_service
 from app.core.config import settings
+from app.core.face_service import get_face_service
 from app.realtime.scheduler import run_device_schedule_loop
+
+
+# Ensure application module logs (e.g. app.core.face_service) emit INFO-level records.
+logging.getLogger("app").setLevel(logging.INFO)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Đang khởi động các dịch vụ chạy ngầm...")
+    get_face_service()
     stop_event = asyncio.Event()
 
     # Khởi chạy song song MQTT và Scheduler

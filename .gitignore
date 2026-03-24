@@ -34,11 +34,9 @@ Thumbs.db
 *.override.yml
 
 #Models
-models/model_weights/
-models/arcface_resnet100.onnx
-models/arcface_resnet100.onnx.data
-models/iresnet.py
-models/det_10g.onnx
+models/*
+!models/prepare.py
+!models/requirements.txt
 
 # Logs
 backend/uploads/*

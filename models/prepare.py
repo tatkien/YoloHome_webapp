@@ -6,6 +6,7 @@ import zipfile
 import torch
 import onnx
 
+# Download and prepare ArcFace ResNet100 model for ONNX export
 # Download latest version
 path = kagglehub.model_download("nguyenletruongthien/auraface-resnet100-arcface-ms1mv3/pyTorch/r100_ms1mv3")
 _src = os.path.join(path, "ms1mv3_arcface_r100_fp16.pth")
@@ -50,6 +51,27 @@ if not os.path.exists(RETINAFACE_PATH):
     print(f"RetinaFace model saved to {RETINAFACE_PATH}")
 else:
     print(f"RetinaFace model already exists at {RETINAFACE_PATH}")
+
+# Download and prepare MiniFASNetV2 model
+MINIFASNET_PATH = os.path.join(os.getcwd(), "MiniFASNetV2.onnx")
+if not os.path.exists(MINIFASNET_PATH):
+    MINIFASNET_URL = "https://github.com/yakhyo/face-anti-spoofing/releases/download/weights/MiniFASNetV2.onnx"
+    print(f"Downloading MiniFASNetV2.onnx from {MINIFASNET_URL}...")
+    urllib.request.urlretrieve(MINIFASNET_URL, MINIFASNET_PATH)
+    print(f"MiniFASNetV2 model saved to {MINIFASNET_PATH}")
+else:
+    print(f"MiniFASNetV2 model already exists at {MINIFASNET_PATH}")
+
+ # Download and prepare MiniFASNetV1SE model
+MINIFASNETV1SE_PATH = os.path.join(os.getcwd(), "MiniFASNetV1SE.onnx")
+if not os.path.exists(MINIFASNETV1SE_PATH):
+    MINIFASNETV1SE_URL = "https://github.com/yakhyo/face-anti-spoofing/releases/download/weights/MiniFASNetV1SE.onnx"
+    print(f"Downloading MiniFASNetV1SE.onnx from {MINIFASNETV1SE_URL}...")
+    urllib.request.urlretrieve(MINIFASNETV1SE_URL, MINIFASNETV1SE_PATH)
+    print(f"MiniFASNetV1SE model saved to {MINIFASNETV1SE_PATH}")
+else:
+    print(f"MiniFASNetV1SE model already exists at {MINIFASNETV1SE_PATH}")
+
 
 from iresnet import iresnet50, iresnet100
 
@@ -98,4 +120,7 @@ def prepare_model(pth_file_path, onnx_output_path, model_size="iresnet50"):
     print("ONNX Graph is valid and ready for FastAPI.")
 
 if __name__ == "__main__":
-    prepare_model(WEIGHTS_PATH, "arcface_resnet100.onnx", model_size="iresnet100")
+    if not os.path.exists(os.path.join(os.getcwd(), "arcface_resnet100.onnx")):
+        prepare_model(WEIGHTS_PATH,  "arcface_resnet100.onnx", model_size="iresnet100")
+    else:
+        print(f"ONNX model already exists at {os.path.join(os.getcwd(), 'arcface_resnet100.onnx')}")
