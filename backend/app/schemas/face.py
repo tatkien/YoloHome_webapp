@@ -46,4 +46,5 @@ class FaceRecognizeResult(BaseModel):
     matched_user_name: str | None = None
     bbox: list[float] | None = None             # [x1, y1, x2, y2]
     detection_score: float | None = None
+    anti_spoof_score: float | None = None
 

@@ -43,15 +43,17 @@ class FaceDetection:
 
 
 class FaceService:
-    """Singleton service wrapping RetinaFace + ArcFace ONNX inference."""
+    """Singleton service wrapping RetinaFace + anti-spoofing + ArcFace ONNX inference."""
 
     def __init__(
         self,
         retinaface_path: str | None = None,
         arcface_path: str | None = None,
+        antispoof_path: str | None = None,
     ) -> None:
         retinaface_path = retinaface_path or settings.RETINAFACE_MODEL_PATH
         arcface_path = arcface_path or settings.ARCFACE_MODEL_PATH
+        antispoof_path = antispoof_path or settings.ANTISPOOF_MODEL_PATH
 
         opts = ort.SessionOptions()
         opts.log_severity_level = 3  # suppress noisy logs
@@ -66,6 +68,11 @@ class FaceService:
             arcface_path, sess_options=opts, providers=["CPUExecutionProvider"]
         )
 
+        logger.info("Loading MiniFASNetV2 anti-spoof model from %s …", antispoof_path)
+        self._antispoof_session = ort.InferenceSession(
+            antispoof_path, sess_options=opts, providers=["CPUExecutionProvider"]
+        )
+
         # Cache RetinaFace I/O metadata
         _retina_input = self._retina_session.get_inputs()[0]
         self._retina_input_name = _retina_input.name
@@ -73,6 +80,9 @@ class FaceService:
 
         # Cache ArcFace I/O metadata
         self._arcface_input_name = self._arcface_session.get_inputs()[0].name
+
+        # Cache anti-spoof I/O metadata
+        self._antispoof_input_name = self._antispoof_session.get_inputs()[0].name
 
         logger.info("Face models loaded successfully.")
 
@@ -312,6 +322,74 @@ class FaceService:
         return aligned
 
     # ------------------------------------------------------------------
+    # Anti-spoofing (MiniFASNetV2)
+    # ------------------------------------------------------------------
+    def is_real_face(
+        self,
+        image_bgr: np.ndarray,
+        bbox: np.ndarray,
+        scale: float = 2.7,
+    ) -> tuple[bool, float]:
+        """Run MiniFASNetV2 liveness check on the face region.
+
+        Parameters
+        ----------
+        image_bgr : np.ndarray
+            Full image in BGR.
+        bbox : np.ndarray
+            Bounding box (x1, y1, x2, y2).
+        scale : float
+            Expansion factor around the bbox centre (default 2.7 per
+            Silent-Face-Anti-Spoofing reference).
+
+        Returns
+        -------
+        tuple[bool, float]
+            (is_real, anti_spoof_score) where anti_spoof_score is the
+            maximum softmax probability.
+        """
+        img_h, img_w = image_bgr.shape[:2]
+        x1, y1, x2, y2 = bbox.astype(int)
+
+        # Expand bbox by *scale* from centre
+        cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+        bw, bh = (x2 - x1), (y2 - y1)
+        new_w, new_h = bw * scale, bh * scale
+        nx1 = int(max(cx - new_w / 2, 0))
+        ny1 = int(max(cy - new_h / 2, 0))
+        nx2 = int(min(cx + new_w / 2, img_w))
+        ny2 = int(min(cy + new_h / 2, img_h))
+
+        crop = image_bgr[ny1:ny2, nx1:nx2]
+        if crop.size == 0:
+            logger.warning("Anti-spoofing: empty crop, treating as spoof")
+            return (False, 0.0)
+
+        # Match MiniFASNetV2 ONNX reference preprocessing: float32, HWC->CHW, NCHW.
+        face_80 = cv2.resize(crop, (80, 80)).astype(np.float32)
+        face_80 = np.transpose(face_80, (2, 0, 1))  # CHW
+        blob = np.expand_dims(face_80, axis=0)      # (1, 3, 80, 80)
+
+        logits = self._antispoof_session.run(
+            None, {self._antispoof_input_name: blob}
+        )[0]
+
+        # Reference decision path: softmax -> argmax, where class 1 is Real.
+        exp_logits = np.exp(logits - np.max(logits))
+        probs = exp_logits / exp_logits.sum()
+        label_idx = int(np.argmax(probs))
+        score = float(probs[0, label_idx])
+        print(f"Anti-spoofing raw logits: {logits.flatten()} -> probs: {probs.flatten()} -> label: {label_idx} score: {score:.4f}")
+        is_real = label_idx == 1 and probs.flatten()[1] >= settings.ANTISPOOF_THRESHOLD
+        logger.info(
+            "Anti-spoofing: class=%d score=%.4f -> %s",
+            label_idx,
+            score,
+            "REAL" if is_real else "SPOOF",
+        )
+        return (is_real, score)
+
+    # ------------------------------------------------------------------
     # ArcFace embedding
     # ------------------------------------------------------------------
     def extract_embedding(self, aligned_face: np.ndarray) -> np.ndarray:
@@ -337,23 +415,30 @@ class FaceService:
         self,
         image_bgr: np.ndarray,
         score_threshold: float = 0.5,
-    ) -> list[tuple[np.ndarray, np.ndarray, float]]:
-        """Detect faces, align each, and extract ArcFace embeddings.
+    ) -> list[tuple[np.ndarray, np.ndarray | None, float, float]]:
+        """Detect faces, run anti-spoofing, align real faces, and extract embeddings.
 
         Returns
         -------
-        list[tuple[bbox, embedding, score]]
+        list[tuple[bbox, embedding | None, score, anti_spoof_score]]
             Each entry contains:
             - bbox (4,) — x1, y1, x2, y2
-            - embedding (512,) — L2-normalised 512-d vector
+            - embedding (512,) or **None** if the face was classified as spoof
             - score — detection confidence
+            - anti_spoof_score — maximum softmax probability from MiniFASNetV2
         """
         detections = self.detect_faces(image_bgr, score_threshold=score_threshold)
-        results: list[tuple[np.ndarray, np.ndarray, float]] = []
+        results: list[tuple[np.ndarray, np.ndarray | None, float, float]] = []
         for det in detections:
+            scale = settings.ANTISPOOF_SCALE
+            # Anti-spoofing gate — skip ArcFace for fake faces
+            is_real, anti_spoof_score = self.is_real_face(image_bgr, det.bbox, scale=scale)
+            if not is_real:
+                results.append((det.bbox, None, det.score, anti_spoof_score))
+                continue
             aligned = self.align_face(image_bgr, det.landmarks)
             embedding = self.extract_embedding(aligned)
-            results.append((det.bbox, embedding, det.score))
+            results.append((det.bbox, embedding, det.score, anti_spoof_score))
         return results
 
 
@@ -373,9 +458,10 @@ def get_face_service() -> FaceService:
     global _face_service
     if _face_service is None:
         logger.info(
-            "Initializing FaceService with RETINAFACE_MODEL_PATH=%s ARCFACE_MODEL_PATH=%s",
+            "Initializing FaceService with RETINAFACE=%s  ARCFACE=%s  ANTISPOOF=%s",
             settings.RETINAFACE_MODEL_PATH,
             settings.ARCFACE_MODEL_PATH,
+            settings.ANTISPOOF_MODEL_PATH,
         )
         try:
             _face_service = FaceService()

@@ -27,6 +27,7 @@ export default function FaceLogsPage() {
 
   // Stats
   const recognized = logs.filter((l) => l.status === 'recognized').length;
+  const spoof = logs.filter((l) => (l.status || '').toLowerCase().includes('spoof')).length;
   const unknown = logs.filter((l) => l.status === 'unknown').length;
 
   return (
@@ -40,19 +41,25 @@ export default function FaceLogsPage() {
 
       {/* Stats */}
       <Row className="g-3 mb-4">
-        <Col md={4}>
+        <Col md={3}>
           <div className="yh-card p-3 text-center">
             <div className="stat-value">{logs.length}</div>
             <div className="stat-label">Total Logs</div>
           </div>
         </Col>
-        <Col md={4}>
+        <Col md={3}>
           <div className="yh-card p-3 text-center">
             <div style={{ fontSize: '1.8rem', fontWeight: 700, color: 'var(--accent-green)' }}>{recognized}</div>
             <div className="stat-label">Recognized</div>
           </div>
         </Col>
-        <Col md={4}>
+        <Col md={3}>
+          <div className="yh-card p-3 text-center">
+            <div style={{ fontSize: '1.8rem', fontWeight: 700, color: 'var(--accent-red)' }}>{spoof}</div>
+            <div className="stat-label">Spoof</div>
+          </div>
+        </Col>
+        <Col md={3}>
           <div className="yh-card p-3 text-center">
             <div style={{ fontSize: '1.8rem', fontWeight: 700, color: 'var(--accent-yellow)' }}>{unknown}</div>
             <div className="stat-label">Unknown</div>
@@ -116,7 +123,10 @@ export default function FaceLogsPage() {
                   <tr key={log.id}>
                     <td>{log.id}</td>
                     <td>
-                      <span className={log.status === 'recognized' ? 'badge-recognized' : 'badge-unknown'}>
+                      <span className={(log.status || '').toLowerCase() === 'recognized'
+                        ? 'badge-recognized'
+                        : ((log.status || '').toLowerCase().includes('spoof') ? 'badge-spoof' : 'badge-unknown')}
+                      >
                         {log.status}
                       </span>
                     </td>

@@ -1,3 +1,4 @@
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
@@ -23,6 +24,8 @@ from app.schemas.face import (
     FaceRecognitionLogRead,
     FaceRecognizeResult,
 )
+
+logger = logging.getLogger(__name__)
 
 UPLOAD_DIR = "/app/uploads/face_recognition"
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -138,7 +141,14 @@ async def create_enrollment_from_image(
         )
 
     # Use the highest-confidence face
-    _, embedding, _ = results[0]
+    _, embedding, _, _ = results[0]
+
+    # Anti-spoofing gate: embedding is None when face is classified as spoof
+    if embedding is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Spoofed face detected — enrollment rejected",
+        )
 
     enrollment = FaceEnrollment(
         user_id=user_id,
@@ -252,7 +262,25 @@ async def recognize_face(
         )
 
     # Use the highest-confidence detection
-    bbox, embedding, det_score = results[0]
+    bbox, embedding, det_score, anti_spoof_score = results[0]
+
+    # Anti-spoofing gate: if embedding is None the face was classified as spoof
+    if embedding is None:
+        log = FaceRecognitionLog(
+            device_id=device_id,
+            image_path=image_path,
+            status="Spoof detected",
+        )
+        db.add(log)
+        await db.commit()
+        await db.refresh(log)
+        return FaceRecognizeResult(
+            log_id=log.id,
+            status="Spoof detected",
+            bbox=bbox.tolist(),
+            detection_score=round(float(det_score), 4),
+            anti_spoof_score=round(float(anti_spoof_score), 4),
+        )
 
     # --- Gate on detection quality ---
     # Low detection scores produce unreliable embeddings; skip matching.
@@ -271,6 +299,7 @@ async def recognize_face(
             status="unknown",
             bbox=bbox.tolist(),
             detection_score=round(float(det_score), 4),
+            anti_spoof_score=round(float(anti_spoof_score), 4),
         )
 
     embedding_list = embedding.tolist()
@@ -338,6 +367,7 @@ async def recognize_face(
         matched_user_name=matched_user_name,
         bbox=bbox.tolist(),
         detection_score=round(float(det_score), 4),
+        anti_spoof_score=round(float(anti_spoof_score), 4),
     )
 
 
