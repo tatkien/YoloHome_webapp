@@ -18,7 +18,6 @@ class DashboardWidget(Base):
 
     id = sa.Column(sa.Integer, primary_key=True, index=True)
     dashboard_id = sa.Column(sa.Integer, sa.ForeignKey("dashboards.id", ondelete="CASCADE"), nullable=False, index=True)
-    feed_id = sa.Column(sa.Integer, sa.ForeignKey("feeds.id", ondelete="SET NULL"), nullable=True)
     title = sa.Column(sa.String(255), nullable=False)
     widget_type = sa.Column(sa.String(64), nullable=False)
     position_x = sa.Column(sa.Integer, nullable=False, default=0, server_default="0")

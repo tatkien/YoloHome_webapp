@@ -7,6 +7,7 @@ A smart home web application built with the following tech stack:
 | **Frontend** | React (JavaScript) + Bootstrap 5 |
 | **Backend** | FastAPI (Python) |
 | **Database** | PostgreSQL |
+| **Hardware** | MicroPython (Thonny)|
 | **Migrations** | Alembic |
 | **Containers** | Docker + Docker Compose |
 
@@ -24,6 +25,7 @@ YoloHome_webapp/
 │   │   ├── models/         # SQLAlchemy ORM models
 │   │   ├── realtime/       # WebSocket + scheduler utilities
 │   │   ├── schemas/        # Pydantic schemas
+│   │   ├── service/        # MQTT
 │   │   └── tests/          # Pytest test suite
 │   ├── alembic/            # Database migrations
 │   ├── Dockerfile
@@ -39,9 +41,11 @@ YoloHome_webapp/
 │   ├── Dockerfile
 │   ├── nginx.conf
 │   └── package.json
+|
+├── hardware/               # MicroPython (Thonny) + Yolobit
+│   └── yolobit.py
 │
 ├── models/                 # ML model weights
-├── gateway.py
 └── docker-compose.yml      # One-command local environment
 ```
 
