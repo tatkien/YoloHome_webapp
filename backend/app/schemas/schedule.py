@@ -12,7 +12,7 @@ class DeviceScheduleCreate(BaseModel):
 
 class DeviceScheduleRead(BaseModel):
     id: int
-    device_id: int
+    device_id: str
     time_of_day: time
     action: str
     is_active: bool

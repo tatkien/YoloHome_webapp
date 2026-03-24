@@ -1,579 +1,273 @@
-import re
-from datetime import datetime, timezone
-
-import sqlalchemy as sa
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from typing import List
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+import sqlalchemy as sa
+from sqlalchemy.orm import selectinload
+from pydantic import BaseModel, Field
 
-from app.api.deps import get_admin_user, get_current_user
-from app.core.security import generate_device_key, hash_secret, verify_secret
-from app.db.db_utils import reset_sequence_to_min_gap
-from app.db.session import get_db
-from app.models.command import Command
+# Import các thành phần hệ thống của bạn
+from app.api.deps import get_current_user, get_admin_user, get_db
 from app.models.device import Device
-from app.models.device_schedule import DeviceSchedule
-from app.models.feed import Feed
 from app.models.user import User
-from app.realtime.manager import realtime_manager
-from app.schemas.command import (
-    CommandAcknowledge,
-    CommandCreate,
-    CommandRead,
-    DeviceActivityRead,
-)
-from app.schemas.device import DeviceCreate, DeviceRead, DeviceWithKey
+
+from app.schemas.device import DeviceRead, DeviceUpdate, DeviceCreate
 from app.schemas.schedule import DeviceScheduleCreate, DeviceScheduleRead
+from app.models.device import HardwareNode
+from app.schemas.hardware import HardwareNodeRead
+# from app.main import mqtt_service 
+from app.realtime.websocket_manager import realtime_manager
+from app.service.history import add_history_record
 
 router = APIRouter(prefix="/devices", tags=["devices"])
 
-# Default feed auto-created for each device type
-_DEFAULT_FEED: dict[str, dict] = {
-    "light":  {"name": "Light State",    "key": "light-state",    "data_type": "text"},
-    "fan":    {"name": "Fan Speed",       "key": "fan-speed",      "data_type": "number"},
-    "camera": {"name": "Face Detection",  "key": "face-detection", "data_type": "text"},
-    "temp_sensor": {"name": "Temperature", "key": "temperature", "data_type": "number"},
-    "humidity_sensor": {"name": "Humidity", "key": "humidity", "data_type": "number"},
-}
-
-
-def _slugify(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
-
-
-async def _get_device_or_404(db: AsyncSession, device_id: int) -> Device:
+# --- HÀM HỖ TRỢ ---
+async def _get_device_or_404(db: AsyncSession, device_id: str) -> Device:
+    """Tìm thiết bị bằng UUID hoặc trả về lỗi 404"""
     result = await db.execute(sa.select(Device).where(Device.id == device_id))
     device = result.scalar_one_or_none()
-    if device is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    if not device:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Không tìm thấy thiết bị")
     return device
 
 
-async def _get_owned_device(db: AsyncSession, device_id: int, user: User) -> Device:
-    """Fetch a device and verify the requesting user owns it."""
-    device = await _get_device_or_404(db, device_id)
-    if device.owner_id != user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    return device
+# --- PHẦN QUẢN LÝ MẠCH (HARDWARE) ---
+
+@router.get("/hardware", response_model=List[HardwareNodeRead])
+async def list_hardware_nodes(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user)
+):
+    """Lấy danh sách bo mạch YoloBit và các chân (pins)"""
+    # Gắn selectinload để Database gói luôn các thiết bị con đi kèm, không bị lỗi Lazy Load
+    query = sa.select(HardwareNode).options(selectinload(HardwareNode.devices))
+    result = await db.execute(query)
+    return result.scalars().unique().all() 
+
+@router.get("/hardware/{hardware_id}", response_model=HardwareNodeRead)
+async def read_hardware_node(
+    hardware_id: str, 
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user) # Đã khôi phục khoá User
+):
+    """Xem chi tiết 1 bo mạch"""
+    query = sa.select(HardwareNode).where(HardwareNode.id == hardware_id).options(selectinload(HardwareNode.devices))
+    result = await db.execute(query)
+    node = result.scalar_one_or_none()
+    
+    if not node:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Không tìm thấy bo mạch này")
+    return node
+
+@router.delete("/hardware/{hardware_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_hardware_node(
+    hardware_id: str, 
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_admin_user) # Đã khôi phục khoá Admin
+):
+    """XOÁ bo mạch và tự động xóa tất cả thiết bị con thuộc về mạch này"""
+    # 1. Tìm bo mạch
+    result = await db.execute(sa.select(HardwareNode).where(HardwareNode.id == hardware_id))
+    node = result.scalar_one_or_none()
+    
+    if not node:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Không tìm thấy bo mạch")
+
+    # 2. Xóa bo mạch (Database sẽ tự lo phần xoá các thiết bị con nhờ Cascade)
+    await db.delete(node)
+    await db.commit()
 
 
-async def _authenticate_device(db: AsyncSession, device_id: int, device_key: str | None) -> Device:
-    if not device_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="X-Device-Key header is required",
-        )
-    device = await _get_device_or_404(db, device_id)
-    if not device.is_active or not verify_secret(device_key, device.key_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid device credentials",
-        )
-    return device
+# --- PHẦN 1: CRUD QUẢN LÝ THIẾT BỊ ---
 
-
-def _device_with_key(device: Device, raw_key: str) -> DeviceWithKey:
-    return DeviceWithKey(**DeviceRead.model_validate(device).model_dump(), device_key=raw_key)
-
-
-# ---------------------------------------------------------------------------
-# Device CRUD
-# ---------------------------------------------------------------------------
-
-@router.get("/", response_model=list[DeviceRead])
+@router.get("/", response_model=List[DeviceRead])
 async def list_devices(
-    _: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db), 
+    _: User = Depends(get_current_user) # Đã khôi phục khoá User
 ):
-    """List all devices in the home.
-
-    Returns all devices sorted by creation date (newest first).
-
-    Auth: JWT required.
-    """
-    result = await db.execute(
-        sa.select(Device)
-        .order_by(Device.created_at.desc())
-    )
+    """Lấy danh sách tất cả thiết bị"""
+    result = await db.execute(sa.select(Device).order_by(Device.createdAt.desc()))
     return result.scalars().all()
-
-
-@router.post("/", response_model=DeviceWithKey, status_code=status.HTTP_201_CREATED)
-async def create_device(
-    payload: DeviceCreate,
-    current_user: User = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Register a new device.
-
-    Accepted device types: ``light``, ``fan``, ``camera``, ``temp_sensor``, ``humidity_sensor``.
-    A URL-safe slug is derived from the device name and must be globally unique.
-    A default feed is automatically created for the device type:
-    - light          → "Light State"   (text)
-    - fan            → "Fan Speed"     (number)
-    - camera         → "Face Detection" (text)
-    - temp_sensor    → "Temperature"   (number)
-    - humidity_sensor → "Humidity"     (number)
-
-    The plaintext ``device_key`` is included in the response exactly once and
-    is never stored — flash it to the hardware immediately.
-
-    Auth: JWT required. Admin only.
-
-    Raises:
-        400: Device name produces an empty slug.
-        409: A device with a conflicting slug already exists.
-    """
-    slug = _slugify(payload.name)
-    if not slug:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Device name produces an empty slug",
-        )
-
-    existing = await db.execute(
-        sa.select(Device).where(Device.slug == slug)
-    )
-    if existing.scalar_one_or_none() is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A device with a similar name already exists",
-        )
-
-    raw_key = generate_device_key()
-    device = Device(
-        name=payload.name,
-        slug=slug,
-        device_type=payload.device_type,
-        description=payload.description,
-        key_hash=hash_secret(raw_key),
-        owner_id=current_user.id,
-        is_active=payload.is_active,
-    )
-    db.add(device)
-    await db.commit()
-    await db.refresh(device)
-
-    # Auto-create the default feed for this device type
-    feed_spec = _DEFAULT_FEED[payload.device_type]
-    db.add(Feed(
-        device_id=device.id,
-        name=feed_spec["name"],
-        key=feed_spec["key"],
-        data_type=feed_spec["data_type"],
-    ))
-    await db.commit()
-
-    return _device_with_key(device, raw_key)
-
 
 @router.get("/{device_id}", response_model=DeviceRead)
 async def read_device(
-    device_id: int,
-    _: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    device_id: str, 
+    db: AsyncSession = Depends(get_db), 
+    _: User = Depends(get_current_user) # Đã khôi phục khoá User
 ):
-    """Retrieve a single device by ID.
-
-    Auth: JWT required.
-
-    Raises:
-        404: Device not found.
-    """
+    """Xem chi tiết 1 thiết bị"""
     return await _get_device_or_404(db, device_id)
 
-
-@router.post("/{device_id}/rotate-key", response_model=DeviceWithKey)
-async def rotate_device_key(
-    device_id: int,
-    _: User = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+@router.patch("/{device_id}", response_model=DeviceRead)
+async def update_device(
+    device_id: str, 
+    payload: DeviceUpdate, 
+    db: AsyncSession = Depends(get_db), 
+    admin: User = Depends(get_admin_user) # Đã khôi phục khoá Admin
 ):
-    """Rotate the hardware authentication key for a device.
-
-    Generates a new random key, immediately invalidating the previous one.
-    The physical device will receive ``401`` on all subsequent requests until
-    it is reconfigured with the new key.
-
-    The plaintext key is returned once in the response and never stored —
-    copy it before closing the response.
-
-    Auth: JWT required. Admin only.
-
-    Raises:
-        404: Device not found.
-    """
+    """Cập nhật thông tin (Tên, phòng, loại...)"""
     device = await _get_device_or_404(db, device_id)
-    raw_key = generate_device_key()
-    device.key_hash = hash_secret(raw_key)
+    
+    update_data = payload.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(device, field, value)
+
     await db.commit()
     await db.refresh(device)
-    return _device_with_key(device, raw_key)
+    
+    # Broadcast cập nhật UI
+    await realtime_manager.broadcast_device_event(device_id, {"type": "device.updated"})
 
-
-@router.post("/{device_id}/heartbeat", status_code=status.HTTP_200_OK)
-async def device_heartbeat(
-    device_id: int,
-    x_device_key: str | None = Header(default=None, alias="X-Device-Key"),
-    db: AsyncSession = Depends(get_db),
-):
-    """Record a liveness ping from the physical device.
-
-    Called by the hardware kit or gateway on a fixed interval to signal it is
-    online. Updates ``last_seen_at`` on the device record and broadcasts a
-    ``device.connected`` WebSocket event to all subscribers of this device.
-
-    Auth: X-Device-Key header required (hardware authentication).
-
-    Raises:
-        401: Missing or invalid X-Device-Key, or device is inactive.
-        404: Device not found.
-    """
-    device = await _authenticate_device(db, device_id, x_device_key)
-    now = datetime.now(timezone.utc)
-    device.last_seen_at = now
-    await db.commit()
-
-    await realtime_manager.broadcast_device_event(
-        device_id,
-        {"type": "device.connected", "device_id": device_id, "timestamp": now.isoformat()},
+    # Thêm log lịch sử
+    await add_history_record(
+        device_id=device.id,
+        device_name=device.name,
+        action="Cập nhật thông tin cấu hình thiết bị",
+        actor=str(admin.id), # Lấy ID thực tế
+        source="Web API (Update)"
     )
-    return {"status": "ok", "device_id": device_id, "timestamp": now.isoformat()}
 
+    return device
 
 @router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_device(
-    device_id: int,
-    _: User = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    device_id: str, 
+    db: AsyncSession = Depends(get_db), 
+    admin: User = Depends(get_admin_user) # Đã khôi phục khoá Admin
 ):
-    """Permanently delete a device and all its associated data.
-
-    Cascade rules on the database model handle removal of related feeds,
-    commands, and feed values.
-
-    Auth: JWT required. Admin only.
-
-    Raises:
-        404: Device not found.
-    """
+    """Xóa thiết bị"""
     device = await _get_device_or_404(db, device_id)
+
+    # Lưu lại tên trước khi xoá để ghi log
+    deleted_device_name = device.name
+
     await db.delete(device)
     await db.commit()
-    await reset_sequence_to_min_gap(db, "devices", "devices_id_seq")
 
-
-@router.get("/{device_id}/schedules", response_model=list[DeviceScheduleRead])
-async def list_device_schedules(
-    device_id: int,
-    _: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """List schedules for a device.
-
-    Auth: JWT required.
-
-    Raises:
-        404: Device not found.
-    """
-    await _get_device_or_404(db, device_id)
-    result = await db.execute(
-        sa.select(DeviceSchedule)
-        .where(DeviceSchedule.device_id == device_id)
-        .order_by(DeviceSchedule.time_of_day.asc())
-    )
-    return result.scalars().all()
-
-
-@router.post("/{device_id}/schedules", response_model=DeviceScheduleRead, status_code=status.HTTP_201_CREATED)
-async def create_device_schedule(
-    device_id: int,
-    payload: DeviceScheduleCreate,
-    current_user: User = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Create a daily schedule for a light device.
-
-    Auth: JWT required. Admin only.
-
-    Raises:
-        400: Schedule time includes seconds, or device type is unsupported.
-        404: Device not found.
-    """
-    device = await _get_device_or_404(db, device_id)
-    if device.device_type != "light":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Scheduling is only supported for light devices",
-        )
-
-    if payload.time_of_day.second or payload.time_of_day.microsecond:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Schedule time must be in HH:MM format",
-        )
-
-    schedule = DeviceSchedule(
+    # Thêm log lịch sử
+    await add_history_record(
         device_id=device_id,
-        time_of_day=payload.time_of_day.replace(second=0, microsecond=0),
+        device_name=deleted_device_name,
+        action="Xóa thiết bị khỏi hệ thống",
+        actor=str(admin.id), # Lấy ID thực tế
+        source="Web API (Delete)"
+    )
+
+
+# --- PHẦN 2: ĐIỀU KHIỂN QUA MQTT ---
+
+class DeviceControlRequest(BaseModel):
+    isOn: bool
+    value: int = Field(0, ge=0, le=1023)
+
+@router.post("/{device_id}/command")
+async def send_command(
+    device_id: str, 
+    payload: DeviceControlRequest, 
+    db: AsyncSession = Depends(get_db), 
+    user: User = Depends(get_current_user) 
+):
+    """Web gọi API này để gửi lệnh xuống mạch YoloBit qua MQTT"""
+    device = await _get_device_or_404(db, device_id)
+    
+    if not device.hardwareId or not device.pin:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail="Thiết bị chưa liên kết phần cứng"
+        )
+
+    # Bắn lệnh qua MQTT
+    try:
+        from app.main import mqtt_service 
+        await mqtt_service.publish_command(
+            hardware_id=device.hardwareId,
+            pin=device.pin,
+            is_on=payload.isOn,
+            value=payload.value
+        )
+
+        # Thêm log lịch sử
+        action_detail = f"Gửi lệnh: {'Bật' if payload.isOn else 'Tắt'} (Giá trị: {payload.value})"
+        await add_history_record(
+            device_id=device.id,
+            device_name=device.name,
+            action=action_detail,
+            actor=str(user.id), # Lấy ID thực tế
+            source="Web Command"
+        )
+    except Exception as e:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Lỗi gửi MQTT: {e}")
+    
+    # Đợi mạch phản hồi vào topic 'state' thì DB mới cập nhật
+    return {"status": "success", "message": "Lệnh đã được gửi xuống mạch"}
+
+
+# --- PHẦN 3: LỊCH TRÌNH ---
+
+@router.post("/{device_id}/schedules", response_model=DeviceScheduleRead)
+async def create_schedule(
+    device_id: str, 
+    payload: DeviceScheduleCreate, 
+    db: AsyncSession = Depends(get_db), 
+    user: User = Depends(get_current_user) # Đã khôi phục khoá User
+):
+    """Hẹn giờ cho thiết bị"""
+    device = await _get_device_or_404(db, device_id)
+        
+    schedule = DeviceSchedule( # Lưu ý: Cần import DeviceSchedule nếu chưa có
+        device_id=device_id, 
         action=payload.action,
-        is_active=payload.is_active,
-        created_by_id=current_user.id,
+        time_of_day=payload.time_of_day.replace(second=0, microsecond=0),
+        created_by_id=str(user.id) # Ghi nhận ID của người đặt lịch
     )
     db.add(schedule)
     await db.commit()
-    await db.refresh(schedule)
     return schedule
 
-
-@router.delete("/{device_id}/schedules/{schedule_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_device_schedule(
-    device_id: int,
-    schedule_id: int,
-    _: User = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Delete a device schedule.
-
-    Auth: JWT required. Admin only.
-
-    Raises:
-        404: Schedule not found.
+@router.get("/docs-websocket-info", tags=["Tài liệu WebSocket (Chỉ tra cứu)"])
+async def websocket_documentation_only():
     """
-    result = await db.execute(
-        sa.select(DeviceSchedule).where(
-            DeviceSchedule.id == schedule_id,
-            DeviceSchedule.device_id == device_id,
-        )
-    )
-    schedule = result.scalar_one_or_none()
-    if schedule is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Schedule not found",
-        )
-    await db.delete(schedule)
-    await db.commit()
+    ### ⚠️ LƯU Ý: ĐÂY LÀ API GIẢ (DÙNG ĐỂ TRA CỨU TÀI LIỆU)
+    **không bấm "Execute" vì API này không trả về dữ liệu thực.**
+    
+    Hệ thống sử dụng WebSocket để cập nhật dữ liệu thời gian thực (Real-time). Dưới đây là hướng dẫn kết nối:
 
+    ---
+    ### 1. Link theo dõi dữ liệu cảm biến
+    Dùng để nhận dữ liệu từ một mạch.
+    * **URL:** `ws://{{host}}/api/v1/ws/hardware/{hardware_id}?token={{your_jwt_token}}`
+    * **Tham số:** * `hardware_id`: ID của mạch (VD: `MOCK_BOARD`)
+        * `token`: Truyền JWT Token trực tiếp vào URL sau dấu `?`
+    
+    ---
+    ### 2. Link theo dõi trạng thái thiết bị lẻ
+    Dùng để nhận dữ liệu từ 1 thiết bị.
+    * **URL:** `ws://{{host}}/api/v1/ws/devices/{device_id}?token={{your_jwt_token}}`
+    * **Tham số:** * `device_id`: UUID của thiết bị trong Database.
 
-@router.get("/{device_id}/commands", response_model=list[CommandRead])
-async def list_device_commands(
-    device_id: int,
-    command_status: str | None = Query(default=None, alias="status"),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """List all commands issued to a device, with optional status filtering.
+    ---
+    ### 3. Giao thức tin nhắn (JSON)
+    Khi đã kết nối thành công, Server và Client sẽ nói chuyện qua định dạng JSON:
 
-    Use the ``?status=`` query parameter to filter by command lifecycle state:
-    ``pending``, ``delivered``, or ``acknowledged``.
-    Results are ordered by creation time (newest first).
+    * **Server -> Client (Lúc mới nối):** `{"type": "subscription.ready", "id": "..."}`
+    * **Client -> Server (Giữ mạng):** Gửi text: `"ping"` (định kỳ) để nhận lại `{"type": "pong"}`.
 
-    This is a read-only endpoint with no side effects — commands are not
-    mutated or consumed by this call.
-
-    Auth: JWT required.
-
-    Raises:
-        404: Device not found.
+    **Khi có cập nhật cảm biến (Hardware Stream):**
+    ```json
+    {
+      "event": "sensor_update",
+      "hardware_id": "MOCK_BOARD",
+      "data": { "temp": 28, "humi": 70 }
+    }
+    ```
+    **Khi có thay đổi trạng thái thiết bị (Device Stream):**
+    ```json
+    {
+      "event": "device_state_update",
+      "device_id": "uuid-cua-thiet-bi",
+      "data": { "value": 2, "isOn": true, "status": "success" }
+    }
+    ```
+    ---
+    **Công cụ test khuyến nghị:** [Postman] (Chọn WebSocket).
     """
-    await _get_device_or_404(db, device_id)
-    query = sa.select(Command).where(Command.device_id == device_id)
-    if command_status:
-        query = query.where(Command.status == command_status)
-    result = await db.execute(query.order_by(Command.created_at.desc()))
-    return result.scalars().all()
-
-
-@router.get("/{device_id}/activity", response_model=list[DeviceActivityRead])
-async def list_device_activity(
-    device_id: int,
-    limit: int = Query(default=20, ge=1, le=200),
-    _: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Return recent device activity based on command history.
-
-    Auth: JWT required.
-
-    Raises:
-        404: Device not found.
-    """
-    await _get_device_or_404(db, device_id)
-    result = await db.execute(
-        sa.select(Command, User.username)
-        .outerjoin(User, User.id == Command.created_by_id)
-        .where(Command.device_id == device_id)
-        .order_by(Command.created_at.desc())
-        .limit(limit)
-    )
-    activities: list[DeviceActivityRead] = []
-    for command, username in result.all():
-        activities.append(
-            DeviceActivityRead(
-                id=command.id,
-                device_id=command.device_id,
-                feed_id=command.feed_id,
-                payload=command.payload,
-                result=command.result,
-                status=command.status,
-                delivered_at=command.delivered_at,
-                acknowledged_at=command.acknowledged_at,
-                created_at=command.created_at,
-                created_by_id=command.created_by_id,
-                created_by_username=username,
-            )
-        )
-    return activities
-
-
-@router.post("/{device_id}/commands", response_model=CommandRead, status_code=status.HTTP_201_CREATED)
-async def create_command(
-    device_id: int,
-    payload: CommandCreate,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Send a command to a device.
-
-    Creates a new command in ``pending`` status and broadcasts a
-    ``command.created`` WebSocket event so the dashboard can reflect the
-    change immediately.
-
-    If ``feed_id`` is provided it must belong to the target device; this ties
-    the command to a specific feed (e.g. set fan speed on the fan-speed feed).
-    Omit ``feed_id`` to send a generic device-level command.
-
-    The physical device picks up the command via ``GET /commands/pending``.
-
-    Auth: JWT required.
-
-    Raises:
-        400: ``feed_id`` does not belong to the specified device.
-        404: Device not found.
-    """
-    await _get_device_or_404(db, device_id)
-    if payload.feed_id is not None:
-        result = await db.execute(
-            sa.select(Feed).where(
-                Feed.id == payload.feed_id,
-                Feed.device_id == device_id,
-            )
-        )
-        if result.scalar_one_or_none() is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Feed does not belong to the selected device",
-            )
-
-    command = Command(
-        device_id=device_id,
-        feed_id=payload.feed_id,
-        created_by_id=current_user.id,
-        payload=payload.payload,
-        status="pending",
-    )
-    db.add(command)
-    await db.commit()
-    await db.refresh(command)
-
-    command_message = CommandRead.model_validate(command).model_dump(mode="json")
-    await realtime_manager.broadcast_device_event(
-        device_id,
-        {"type": "command.created", "device_id": device_id, "command": command_message},
-    )
-    return command
-
-
-@router.get("/{device_id}/commands/pending", response_model=list[CommandRead])
-async def list_pending_commands(
-    device_id: int,
-    x_device_key: str | None = Header(default=None, alias="X-Device-Key"),
-    db: AsyncSession = Depends(get_db),
-):
-    """Fetch and consume all pending commands for a device.
-
-    Intended to be polled by the physical hardware. On each call:
-    - All ``pending`` commands are returned (oldest first).
-    - Their status is immediately transitioned to ``delivered``.
-    - ``device.last_seen_at`` is updated (acts as an implicit heartbeat).
-    - A ``command.delivered`` WebSocket event is broadcast for each command.
-
-    Commands are consumed — repeated calls will not return the same commands
-    again unless new ones have been issued.
-
-    Auth: X-Device-Key header required (hardware authentication).
-
-    Raises:
-        401: Missing or invalid X-Device-Key, or device is inactive.
-        404: Device not found.
-    """
-    device = await _authenticate_device(db, device_id, x_device_key)
-    now = datetime.now(timezone.utc)
-    result = await db.execute(
-        sa.select(Command)
-        .where(Command.device_id == device_id, Command.status == "pending")
-        .order_by(Command.created_at.asc())
-    )
-    commands = result.scalars().all()
-    for command in commands:
-        command.status = "delivered"
-        command.delivered_at = now
-
-    device.last_seen_at = now
-    await db.commit()
-
-    for command in commands:
-        command_message = CommandRead.model_validate(command).model_dump(mode="json")
-        await realtime_manager.broadcast_device_event(
-            device_id,
-            {"type": "command.delivered", "device_id": device_id, "command": command_message},
-        )
-    return commands
-
-
-@router.patch("/{device_id}/commands/{command_id}/ack", response_model=CommandRead)
-async def acknowledge_command(
-    device_id: int,
-    command_id: int,
-    payload: CommandAcknowledge,
-    x_device_key: str | None = Header(default=None, alias="X-Device-Key"),
-    db: AsyncSession = Depends(get_db),
-):
-    """Acknowledge that a device has executed a command.
-
-    Called by the physical hardware after it has processed a delivered command.
-    Transitions the command status to ``acknowledged``, records the execution
-    result, updates ``device.last_seen_at``, and broadcasts a
-    ``command.acknowledged`` WebSocket event.
-
-    Auth: X-Device-Key header required (hardware authentication).
-
-    Raises:
-        401: Missing or invalid X-Device-Key, or device is inactive.
-        404: Device or command not found.
-    """
-    device = await _authenticate_device(db, device_id, x_device_key)
-    result = await db.execute(
-        sa.select(Command).where(Command.id == command_id, Command.device_id == device_id)
-    )
-    command = result.scalar_one_or_none()
-    if command is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Command not found",
-        )
-
-    now = datetime.now(timezone.utc)
-    command.status = "acknowledged"
-    command.result = payload.result
-    command.acknowledged_at = now
-    device.last_seen_at = now
-    await db.commit()
-    await db.refresh(command)
-
-    command_message = CommandRead.model_validate(command).model_dump(mode="json")
-    await realtime_manager.broadcast_device_event(
-        device_id,
-        {"type": "command.acknowledged", "device_id": device_id, "command": command_message},
-    )
-    return command
+    return {"detail": "Đây là trang tài liệu, không phải API thực tế."}

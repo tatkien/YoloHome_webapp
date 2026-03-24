@@ -5,10 +5,8 @@ from datetime import datetime
 import sqlalchemy as sa
 
 from app.db.session import AsyncSessionLocal
-from app.models.command import Command
 from app.models.device_schedule import DeviceSchedule
-from app.realtime.manager import realtime_manager
-from app.schemas.command import CommandRead
+from app.realtime.websocket_manager import realtime_manager
 
 SCHEDULE_POLL_SECONDS = 30
 

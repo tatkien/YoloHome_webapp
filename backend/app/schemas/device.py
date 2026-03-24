@@ -22,9 +22,8 @@ class DeviceCreate(DeviceBase):
     pass
 
 class DeviceUpdate(BaseModel):
-    isOn: Optional[bool] = None
-    value: Optional[int] = Field(None, ge=0, le=1023)
     name: Optional[str] = None
+    room: Optional[str] = None
 
 class DeviceRead(DeviceBase):
     id: str

@@ -1,3 +1,10 @@
+sqlalchemy
+aiomqtt
+pydantic
+alembic
+pyjwt
+asyncpg
+
 onnx
 onnxscript
 onnxruntime

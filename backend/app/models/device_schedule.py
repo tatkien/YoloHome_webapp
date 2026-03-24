@@ -8,7 +8,7 @@ class DeviceSchedule(Base):
 
     id = sa.Column(sa.Integer, primary_key=True)
     device_id = sa.Column(
-        sa.Integer,
+        sa.String(64),
         sa.ForeignKey("devices.id", ondelete="CASCADE"),
         nullable=False,
         index=True,

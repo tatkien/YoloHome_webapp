@@ -19,6 +19,21 @@ class Settings(BaseSettings):
     FACE_MATCH_THRESHOLD: float = 0.4
     FACE_DETECTION_THRESHOLD: float = 0.7
 
+    # --- HARDWARE SETTINGS ---
+    # Thời gian tự đóng khoá
+    SERVO_AUTO_CLOSE_DELAY_MS: int = 5000 
+    
+    # Các mốc góc quay cho Servo
+    SERVO_OPEN_ANGLE: int = 90
+    SERVO_CLOSE_ANGLE: int = 0
+
+    # --- MQTT CONFIGURATION ---
+    MQTT_BROKER_URL: str = "localhost"
+    MQTT_PORT: int = 1883
+    MQTT_KEEPALIVE: int = 60
+
+
+    """
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def parse_cors_origins(cls, value):
@@ -26,5 +41,6 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
 
+    """
 
 settings = Settings()

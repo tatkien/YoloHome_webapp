@@ -23,7 +23,7 @@ class FaceEnrollmentRead(BaseModel):
 
 class FaceRecognitionLogRead(BaseModel):
     id: int
-    device_id: int | None = None
+    device_id: str | None = None
     image_path: str | None = None
     feature_vector: list[float] | None = None
     matched_enrollment_id: int | None = None
