@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     FACE_MATCH_THRESHOLD: float = 0.4
     FACE_DETECTION_THRESHOLD: float = 0.7
 
+    DEBUG: bool = True
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def parse_cors_origins(cls, value):

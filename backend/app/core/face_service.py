@@ -379,7 +379,10 @@ class FaceService:
         probs = exp_logits / exp_logits.sum()
         label_idx = int(np.argmax(probs))
         score = float(probs[0, label_idx])
-        print(f"Anti-spoofing raw logits: {logits.flatten()} -> probs: {probs.flatten()} -> label: {label_idx} score: {score:.4f}")
+        
+        if settings.DEBUG:
+            print(f"Anti-spoofing raw logits: {logits.flatten()} -> probs: {probs.flatten()} -> label: {label_idx} score: {score:.4f}")
+        
         is_real = label_idx == 1 and probs.flatten()[1] >= settings.ANTISPOOF_THRESHOLD
         logger.info(
             "Anti-spoofing: class=%d score=%.4f -> %s",

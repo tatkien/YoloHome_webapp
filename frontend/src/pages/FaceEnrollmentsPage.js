@@ -19,8 +19,13 @@ export default function FaceEnrollmentsPage() {
   const [enrollDeviceId, setEnrollDeviceId] = useState('');
   const [enrollFile, setEnrollFile] = useState(null);
   const [enrollPreview, setEnrollPreview] = useState(null);
+  const [enrollInputMode, setEnrollInputMode] = useState('upload');
+  const [cameraLoading, setCameraLoading] = useState(false);
+  const [cameraActive, setCameraActive] = useState(false);
   const [enrollLoading, setEnrollLoading] = useState(false);
   const fileInputRef = useRef(null);
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
 
   const fetchEnrollments = useCallback(async () => {
     try {
@@ -51,14 +56,89 @@ export default function FaceEnrollmentsPage() {
   useEffect(() => { fetchEnrollments(); }, [fetchEnrollments]);
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
+  useEffect(() => {
+    if (!cameraActive || enrollInputMode !== 'webcam') return;
+    if (!videoRef.current || !streamRef.current) return;
+
+    videoRef.current.srcObject = streamRef.current;
+    const playPromise = videoRef.current.play();
+    if (playPromise && typeof playPromise.catch === 'function') {
+      playPromise.catch(() => {
+        // Autoplay can be blocked in some browsers even with muted playback.
+      });
+    }
+  }, [cameraActive, enrollInputMode]);
+
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraActive(false);
+  }, []);
+
+  useEffect(() => () => stopCamera(), [stopCamera]);
+
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (file) {
+      stopCamera();
+      setEnrollInputMode('upload');
       setEnrollFile(file);
       const reader = new FileReader();
       reader.onload = (ev) => setEnrollPreview(ev.target.result);
       reader.readAsDataURL(file);
     }
+  };
+
+  const startCamera = async () => {
+    try {
+      setError('');
+      setCameraLoading(true);
+      stopCamera();
+      setEnrollInputMode('webcam');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user' },
+        audio: false,
+      });
+      streamRef.current = stream;
+      setCameraActive(true);
+    } catch (_err) {
+      setError('Could not access webcam. Check browser permissions and HTTPS/localhost context.');
+      setEnrollInputMode('upload');
+    } finally {
+      setCameraLoading(false);
+    }
+  };
+
+  const captureFromWebcam = () => {
+    if (!videoRef.current) return;
+    const video = videoRef.current;
+    if (!video.videoWidth || !video.videoHeight) {
+      setError('Webcam is not ready yet. Please try again.');
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        setError('Failed to capture image from webcam.');
+        return;
+      }
+      const capturedFile = new File([blob], `webcam-${Date.now()}.jpg`, { type: 'image/jpeg' });
+      setEnrollFile(capturedFile);
+      setEnrollPreview(URL.createObjectURL(blob));
+      stopCamera();
+    }, 'image/jpeg', 0.92);
   };
 
   const handleEnroll = async (e) => {
@@ -110,10 +190,13 @@ export default function FaceEnrollmentsPage() {
   };
 
   const resetEnrollForm = () => {
+    stopCamera();
     setEnrollUserId('');
     setEnrollDeviceId('');
     setEnrollFile(null);
     setEnrollPreview(null);
+    setEnrollInputMode('upload');
+    setCameraLoading(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -250,9 +333,37 @@ export default function FaceEnrollmentsPage() {
                 </Form.Group>
                 <Form.Group className="mb-3">
                   <Form.Label>Face Photo</Form.Label>
+                  <div className="d-flex gap-2 mb-2">
+                    <Button
+                      type="button"
+                      variant={enrollInputMode === 'upload' ? 'primary' : 'outline-light'}
+                      onClick={() => {
+                        stopCamera();
+                        setEnrollInputMode('upload');
+                      }}
+                    >
+                      Upload
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={enrollInputMode === 'webcam' ? 'primary' : 'outline-light'}
+                      onClick={startCamera}
+                      disabled={cameraLoading}
+                    >
+                      {cameraLoading ? 'Starting camera...' : 'Use Webcam'}
+                    </Button>
+                    {cameraActive && (
+                      <Button type="button" variant="outline-light" onClick={captureFromWebcam}>Capture</Button>
+                    )}
+                  </div>
                   <div
                     className={`file-upload-zone ${enrollFile ? 'has-file' : ''}`}
-                    onClick={() => fileInputRef.current.click()}
+                    onClick={() => {
+                      if (enrollInputMode === 'upload' && fileInputRef.current) {
+                        fileInputRef.current.click();
+                      }
+                    }}
+                    style={{ cursor: enrollInputMode === 'webcam' ? 'default' : 'pointer' }}
                   >
                     <input
                       type="file"
@@ -271,7 +382,9 @@ export default function FaceEnrollmentsPage() {
                     ) : (
                       <div>
                         <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📷</div>
-                        <div style={{ color: 'var(--text-secondary)' }}>Click to select a photo</div>
+                        <div style={{ color: 'var(--text-secondary)' }}>
+                          {enrollInputMode === 'webcam' ? 'Use Capture when webcam is ready' : 'Click to select a photo'}
+                        </div>
                         <small style={{ color: 'var(--text-muted)' }}>JPEG, PNG, or WebP</small>
                       </div>
                     )}
@@ -279,7 +392,21 @@ export default function FaceEnrollmentsPage() {
                 </Form.Group>
               </Col>
               <Col md={6} className="d-flex align-items-center justify-content-center">
-                {enrollPreview ? (
+                {enrollInputMode === 'webcam' && cameraActive ? (
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    style={{
+                      width: '100%',
+                      maxHeight: '280px',
+                      borderRadius: 'var(--radius)',
+                      border: '1px solid var(--border-color)',
+                      objectFit: 'cover',
+                    }}
+                  />
+                ) : enrollPreview ? (
                   <img
                     src={enrollPreview}
                     alt="Preview"
@@ -308,7 +435,7 @@ export default function FaceEnrollmentsPage() {
             </Row>
           </Modal.Body>
           <Modal.Footer>
-            <Button variant="outline-light" onClick={() => { setShowEnroll(false); resetEnrollForm(); }}>
+            <Button type="button" variant="outline-light" onClick={() => { setShowEnroll(false); resetEnrollForm(); }}>
               Cancel
             </Button>
             <Button type="submit" disabled={enrollLoading || !enrollFile || !enrollUserId}>

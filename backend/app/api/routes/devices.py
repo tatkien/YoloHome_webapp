@@ -259,7 +259,7 @@ async def delete_device(
     device = await _get_device_or_404(db, device_id)
     await db.delete(device)
     await db.commit()
-    await reset_sequence_to_min_gap(db, "devices", "devices_id_seq")
+    # await reset_sequence_to_min_gap(db, "devices", "devices_id_seq")
 
 
 @router.get("/{device_id}/schedules", response_model=list[DeviceScheduleRead])

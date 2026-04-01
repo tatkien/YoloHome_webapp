@@ -106,4 +106,4 @@ async def delete_user(
 
     await db.delete(target_user)
     await db.commit()
-    await reset_sequence_to_min_gap(db, "users", "users_id_seq")
+    # await reset_sequence_to_min_gap(db, "users", "users_id_seq")
