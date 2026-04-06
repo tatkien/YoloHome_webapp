@@ -32,3 +32,11 @@ Thumbs.db
 
 # Docker
 *.override.yml
+
+#Models
+models/*
+!models/prepare.py
+!models/requirements.txt
+
+# Logs
+backend/uploads/*

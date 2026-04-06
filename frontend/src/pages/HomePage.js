@@ -1,59 +1,87 @@
 import React from 'react';
-import { Container, Row, Col, Card, Button } from 'react-bootstrap';
+import { Container, Row, Col, Card } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 
-function HomePage() {
+export default function HomePage() {
+  const { user, isAdmin } = useAuth();
+
+  const quickLinks = [
+    { to: '/devices', icon: '📡', title: 'Devices', desc: 'Manage your smart home devices', color: '#4c7ef3' },
+    { to: '/face/recognize', icon: '🔍', title: 'Recognize', desc: 'Test face recognition AI', color: '#34d399' },
+    { to: '/face/logs', icon: '📋', title: 'Logs', desc: 'View recognition history', color: '#fbbf24' },
+  ];
+
+  if (isAdmin) {
+    quickLinks.push({ to: '/face/enrollments', icon: '🧑', title: 'Enrollments', desc: 'Register faces for recognition', color: '#a78bfa' });
+    quickLinks.push({ to: '/admin/users', icon: '👑', title: 'Admin', desc: 'Manage users & invitation keys', color: '#f87171' });
+  }
+
   return (
-    <Container className="py-5">
+    <Container className="py-5 fade-in">
       <Row className="justify-content-center text-center mb-5">
         <Col md={8}>
-          <h1 className="display-4 fw-bold">Welcome to YoloHome</h1>
-          <p className="lead text-muted">
-            A smart home web application built with React, Bootstrap, FastAPI and PostgreSQL.
+          <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>🏠</div>
+          <h1 style={{ fontWeight: 700, fontSize: '2.2rem', marginBottom: '0.5rem' }}>
+            Welcome back, <span style={{ background: 'var(--gradient-primary)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>{user?.username}</span>
+          </h1>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '1.1rem' }}>
+            Your smart home dashboard
           </p>
-          <Button as={Link} to="/items" variant="primary" size="lg" className="mt-3">
-            Manage Items
-          </Button>
         </Col>
       </Row>
 
       <Row className="g-4 justify-content-center">
-        <Col md={4}>
-          <Card className="h-100 shadow-sm text-center">
-            <Card.Body className="p-4">
-              <div className="fs-1 mb-3">⚡</div>
-              <Card.Title>Fast API Backend</Card.Title>
-              <Card.Text className="text-muted">
-                Powered by FastAPI and PostgreSQL for high-performance data management.
-              </Card.Text>
-            </Card.Body>
-          </Card>
-        </Col>
-        <Col md={4}>
-          <Card className="h-100 shadow-sm text-center">
-            <Card.Body className="p-4">
-              <div className="fs-1 mb-3">🎨</div>
-              <Card.Title>Modern Frontend</Card.Title>
-              <Card.Text className="text-muted">
-                Built with React and Bootstrap for a responsive and beautiful UI.
-              </Card.Text>
-            </Card.Body>
-          </Card>
-        </Col>
-        <Col md={4}>
-          <Card className="h-100 shadow-sm text-center">
-            <Card.Body className="p-4">
-              <div className="fs-1 mb-3">🐳</div>
-              <Card.Title>Docker Ready</Card.Title>
-              <Card.Text className="text-muted">
-                Containerised with Docker Compose for simple local development and deployment.
-              </Card.Text>
-            </Card.Body>
-          </Card>
+        {quickLinks.map((link) => (
+          <Col md={4} lg={3} key={link.to}>
+            <Link to={link.to} style={{ textDecoration: 'none' }}>
+              <Card className="h-100 text-center" style={{ cursor: 'pointer' }}>
+                <Card.Body className="p-4">
+                  <div style={{
+                    width: '60px',
+                    height: '60px',
+                    borderRadius: '16px',
+                    background: `${link.color}15`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '1.8rem',
+                    margin: '0 auto 1rem',
+                  }}>
+                    {link.icon}
+                  </div>
+                  <Card.Title style={{ fontSize: '1rem' }}>{link.title}</Card.Title>
+                  <Card.Text style={{ fontSize: '0.85rem' }}>{link.desc}</Card.Text>
+                </Card.Body>
+              </Card>
+            </Link>
+          </Col>
+        ))}
+      </Row>
+
+      <Row className="justify-content-center mt-5">
+        <Col md={8}>
+          <div className="yh-card p-4">
+            <Row className="text-center g-4">
+              <Col xs={4}>
+                <div style={{ fontSize: '1.5rem', marginBottom: '0.25rem' }}>⚡</div>
+                <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>FastAPI Backend</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>High-performance API</div>
+              </Col>
+              <Col xs={4}>
+                <div style={{ fontSize: '1.5rem', marginBottom: '0.25rem' }}>🤖</div>
+                <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>Face Recognition</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>RetinaFace + ArcFace</div>
+              </Col>
+              <Col xs={4}>
+                <div style={{ fontSize: '1.5rem', marginBottom: '0.25rem' }}>🐳</div>
+                <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>Docker Ready</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Compose for deploy</div>
+              </Col>
+            </Row>
+          </div>
         </Col>
       </Row>
     </Container>
   );
 }
-
-export default HomePage;
