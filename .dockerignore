@@ -1,0 +1,20 @@
+# Prevent sensitive/local files from being sent to Docker build context
+.env
+.env.*
+.git
+.gitignore
+docker-compose.yml
+
+# Python artifacts
+**/__pycache__/
+**/*.py[cod]
+
+# Node artifacts
+frontend/node_modules/
+frontend/build/
+
+# Local uploads and generated assets
+backend/uploads/
+models/*
+!models/prepare.py
+!models/requirements.txt
