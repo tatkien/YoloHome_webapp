@@ -1,85 +1,81 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { HiEye, HiEyeOff } from "react-icons/hi";
 import { toast } from "react-toastify";
+import { useAuth } from '../contexts/AuthContext';
 
 const Login = () => {
+  const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const from = location.state?.from?.pathname || '/';
 
-  const [form, setForm] = useState({ username: "", password: "" });
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-
-  const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setIsLoading(true);
-
+    setError('');
+    setLoading(true);
     try {
-      const res = await fetch("http://localhost:8000/api/v1/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(form),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        toast.error(data.detail || "Login failed");
-        return;
-      }
-
+      const data = await login(username, password);
       toast.success("Login successful!");
-      localStorage.setItem("loggedInUser", JSON.stringify(data.user));
-      window.dispatchEvent(new Event("auth-change"));
-
-      if (data.user.role === "admin") {
-        navigate("/admin");
+      
+      if (from === '/') {
+        if (data.user.role === "admin") {
+          navigate("/admin", { replace: true });
+        } else {
+          navigate("/", { replace: true });
+        }
       } else {
-        navigate("/");
+        navigate(from, { replace: true });
       }
     } catch (err) {
-      console.error(err);
-      toast.error("Server error");
+      setError(err.response?.data?.detail || err.message || 'Login failed');
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
   return (
-    <div className="d-flex justify-content-center align-items-center min-vh-100">
-      <div className="card shadow p-4" style={{ width: "400px" }}>
-        <h3 className="text-center mb-4">Login</h3>
+    <div className="d-flex justify-content-center align-items-center min-vh-100 bg-light">
+      <div className="card shadow p-4 border-0 rounded-4" style={{ width: "100%", maxWidth: "400px" }}>
+        <h3 className="text-center mb-4 fw-semibold">Login</h3>
+
+        {error && (
+          <p className="text-danger text-center small mb-3">{error}</p>
+        )}
 
         <form onSubmit={handleSubmit}>
 
           {/* Username */}
           <div className="mb-3">
-            <label className="form-label">Username</label>
+            <label className="form-label text-muted small fw-bold">Username</label>
             <input
               type="text"
               name="username"
               className="form-control"
               placeholder="Enter username..."
-              onChange={handleChange}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
               required
             />
           </div>
 
           {/* Password */}
           <div className="mb-3">
-            <label className="form-label">Password</label>
+            <label className="form-label text-muted small fw-bold">Password</label>
             <div className="input-group">
               <input
                 type={showPassword ? "text" : "password"}
                 name="password"
                 className="form-control"
                 placeholder="Enter password..."
-                onChange={handleChange}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
                 required
               />
               <button
@@ -94,11 +90,11 @@ const Login = () => {
 
           {/* Submit */}
           <button
-            className="btn btn-primary w-100"
+            className="btn btn-primary w-100 mt-2"
             type="submit"
-            disabled={isLoading}
+            disabled={loading}
           >
-            {isLoading ? (
+            {loading ? (
               <>
                 <span className="spinner-border spinner-border-sm me-2" role="status" />
                 Loading...
@@ -110,8 +106,10 @@ const Login = () => {
         </form>
 
         <p className="text-center small mt-4">
-          Chưa có tài khoản?{" "}
-          <Link to="/register" className="text-primary">Đăng ký</Link>
+          Don't have an account?{" "}
+          <Link to="/register" className="text-primary fw-bold text-decoration-none">
+            Register
+          </Link>
         </p>
       </div>
     </div>

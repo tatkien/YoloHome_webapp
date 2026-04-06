@@ -46,7 +46,7 @@ function AppNavbar() {
   const isAdmin = user?.role === 'admin';
 
   return (
-    <Navbar bg="dark" variant="dark" expand="md" sticky="top">
+    <Navbar className="bg-secondary" variant="dark" expand="md" sticky="top">
       <Container>
         <Navbar.Brand as={Link} to="/">
           🏠 YoloHome

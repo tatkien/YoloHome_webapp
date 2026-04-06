@@ -32,7 +32,7 @@ function App() {
           <Route path="/face/logs" element={<PrivateRoute><FaceLogsPage /></PrivateRoute>} />
 
           {/* Admin */}
-          <Route path="/admin/users" element={<PrivateRoute adminOnly><AdminUsersPage /></PrivateRoute>} />
+          <Route path="/admin" element={<PrivateRoute adminOnly><AdminUsersPage /></PrivateRoute>} />
         </Routes>
       </AuthProvider>
     </Router>

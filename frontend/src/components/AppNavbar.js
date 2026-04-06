@@ -16,7 +16,7 @@ export default function AppNavbar() {
   const isActive = (path) => location.pathname === path;
 
   return (
-    <Navbar expand="md" sticky="top" style={{ padding: '0.5rem 0' }}>
+    <Navbar className="bg-secondary bg-gradient" expand="md" sticky="top" style={{ padding: '0.5rem 0' }}>
       <Container>
         <Navbar.Brand as={Link} to="/">
           🏠 YoloHome
@@ -50,7 +50,7 @@ export default function AppNavbar() {
                   </NavDropdown.Item>
                 </NavDropdown>
                 {isAdmin && (
-                  <Nav.Link as={Link} to="/admin/users" active={isActive('/admin/users')}>
+                  <Nav.Link as={Link} to="/admin" active={isActive('/admin')}>
                     👑 Admin
                   </Nav.Link>
                 )}

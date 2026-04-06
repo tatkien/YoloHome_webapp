@@ -30,7 +30,7 @@ export default function AdminUsersPage() {
     if (!window.confirm(`Delete user "${username}"? This cannot be undone.`)) return;
     setError('');
     try {
-      await api.delete(`/admin/users/${userId}`);
+      await api.delete(`/admin/${userId}`);
       setSuccess(`User "${username}" deleted`);
       fetchUsers();
       setTimeout(() => setSuccess(''), 3000);
@@ -44,7 +44,7 @@ export default function AdminUsersPage() {
     setError('');
     setInvLoading(true);
     try {
-      const res = await api.put('/admin/users/invitation-key', { invitation_key: invKey });
+      const res = await api.put('/admin/invitation-key', { invitation_key: invKey });
       setSuccess(`Invitation key updated at ${new Date(res.data.updated_at).toLocaleString()}`);
       setInvKey('');
       setTimeout(() => setSuccess(''), 4000);
