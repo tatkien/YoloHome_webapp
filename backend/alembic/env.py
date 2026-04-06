@@ -10,7 +10,16 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from app.core.config import settings  # noqa: E402
 from app.db.session import Base  # noqa: E402
-import app.models.item  # noqa: E402, F401
+import app.models.command  # noqa: E402, F401
+import app.models.dashboard  # noqa: E402, F401
+import app.models.device  # noqa: E402, F401
+import app.models.device_schedule  # noqa: E402, F401
+import app.models.face_enrollment  # noqa: E402, F401
+import app.models.face_recognition_log  # noqa: E402, F401
+import app.models.feed  # noqa: E402, F401
+import app.models.feed_value  # noqa: E402, F401
+import app.models.invitation_key  # noqa: E402, F401
+import app.models.user  # noqa: E402, F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
