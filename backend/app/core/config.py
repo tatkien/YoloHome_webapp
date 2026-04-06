@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -10,7 +12,7 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     DEBUG: bool = True
-    CORS_ORIGINS: list[str] = ["http://localhost:3000"]
+    CORS_ORIGINS: Any = ["http://localhost:3000"]
     SETUP_CODE: str | None = None
 
     # Face recognition model paths (relative to container or absolute)
@@ -23,12 +25,15 @@ class Settings(BaseSettings):
     FACE_DETECTION_THRESHOLD: float = 0.7
 
     DEBUG: bool = True
+
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
-    def parse_cors_origins(cls, value):
+    def parse_cors_origins(cls, value) -> list[str]:
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
-        return value
+        if isinstance(value, list):
+            return value
+        return ["http://localhost:3000"]
 
 
 settings = Settings()
