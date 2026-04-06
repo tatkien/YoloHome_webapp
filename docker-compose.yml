@@ -5,9 +5,9 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: yolohome
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_local}
+      POSTGRES_DB: ${POSTGRES_DB:-yolohome}
     ports:
       - "5432:5432"
     volumes:
@@ -22,9 +22,9 @@ services:
     build: ./backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:password@db:5432/yolohome
-      SECRET_KEY: changeme
-      DEBUG: "true"
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:change_me_local@db:5432/yolohome}
+      SECRET_KEY: ${SECRET_KEY:-change_me_local}
+      DEBUG: ${DEBUG:-true}
     ports:
       - "8000:8000"
     depends_on:
