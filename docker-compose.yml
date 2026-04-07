@@ -2,14 +2,14 @@ version: "3.9"
 
 services:
   db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg17
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_local}
       POSTGRES_DB: ${POSTGRES_DB:-yolohome}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -32,6 +32,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+      - ./models:/models:ro
 
   frontend:
     build:
