@@ -1,9 +1,20 @@
+from pathlib import Path
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _find_root_env_file() -> str | None:
+    # Walk up from this file to locate the single project-level .env.
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / ".env"
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=_find_root_env_file(), extra="ignore")
 
     DATABASE_URL: str = "postgresql+asyncpg://postgres:password@localhost:5432/yolohome"
     SECRET_KEY: str = "multidisciplinaryproject"
@@ -22,7 +33,6 @@ class Settings(BaseSettings):
     FACE_MATCH_THRESHOLD: float = 0.4
     FACE_DETECTION_THRESHOLD: float = 0.7
 
-    DEBUG: bool = True
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def parse_cors_origins(cls, value):

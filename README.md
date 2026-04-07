@@ -28,7 +28,6 @@ YoloHome_webapp/
 │   ├── alembic/            # Database migrations
 │   ├── Dockerfile
 │   ├── requirements.txt
-│   └── .env.example        # Environment variable template
 │
 ├── frontend/               # React + Bootstrap frontend
 │   ├── public/
@@ -38,8 +37,10 @@ YoloHome_webapp/
 │   │   └── services/
 │   ├── Dockerfile
 │   ├── nginx.conf
-│   └── package.json
+│   ├── package.json
+│   └── .env.example        # Frontend environment variable template
 │
+├── .env.example            # Backend + Docker Compose environment template
 ├── models/                 # ML model weights
 ├── gateway.py
 └── docker-compose.yml      # One-command local environment
@@ -111,17 +112,18 @@ If runtime files are missing, face enrollment/recognition endpoints and web page
 ### Backend
 
 ```bash
-cd backend
-
 # Create and activate a virtual environment
+cd backend
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Copy and edit environment variables
+# Copy and edit environment variables (run from repository root)
+cd ..
 cp .env.example .env
+cd backend
 
 # Run database migrations
 alembic upgrade head
@@ -143,7 +145,7 @@ CORS_ORIGINS=http://localhost:3000
 SETUP_CODE=yolohome2024
 ```
 
-When using Docker Compose, set `SETUP_CODE` in docker-compose.yml (or add an `env_file` for the backend service) so admin registration works.
+When using Docker Compose, set `SETUP_CODE` in the root `.env` file so admin registration works.
 
 ### Frontend
 
@@ -154,7 +156,7 @@ cd frontend
 npm install
 
 # Copy and edit environment variables
-cp .env.example .env
+cp frontend/.env.example frontend/.env
 
 # Start the development server
 npm start
