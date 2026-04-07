@@ -4,6 +4,8 @@ services:
   db:
     image: pgvector/pgvector:pg17
     restart: unless-stopped
+    env_file:
+      - ./.env
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_local}
@@ -21,6 +23,8 @@ services:
   backend:
     build: ./backend
     restart: unless-stopped
+    env_file:
+      - ./.env
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:change_me_local@db:5432/yolohome}
       SECRET_KEY: ${SECRET_KEY:-change_me_local}
@@ -39,6 +43,8 @@ services:
       context: ./frontend
       target: build
     restart: unless-stopped
+    env_file:
+      - ./.env
     environment:
       REACT_APP_API_URL: http://localhost:8000
     ports:
