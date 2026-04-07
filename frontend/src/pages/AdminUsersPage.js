@@ -58,7 +58,7 @@ export default function AdminUsersPage() {
   return (
     <Container className="py-4 fade-in">
       <div className="page-header">
-        <h1>👑 Admin Panel</h1>
+        <h1>Admin Panel</h1>
         <p>Manage users and invitation keys</p>
       </div>
 
@@ -67,7 +67,7 @@ export default function AdminUsersPage() {
 
       {/* Invitation Key */}
       <div className="yh-card p-4 mb-4">
-        <h5 style={{ fontWeight: 600, marginBottom: '1rem' }}>🔑 Invitation Key</h5>
+        <h5 style={{ fontWeight: 600, marginBottom: '1rem' }}> Invitation Key</h5>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1rem' }}>
           Set the key that new users must provide to register. Changing it invalidates the old key.
         </p>

@@ -16,10 +16,10 @@ export default function AppNavbar() {
   const isActive = (path) => location.pathname === path;
 
   return (
-    <Navbar expand="md" sticky="top" style={{ padding: '0.5rem 0' }}>
+    <Navbar className="border-bottom sticky shadow-lg bg-white" expand="md" sticky="top" style={{ padding: '0.5rem 0', zIndex: 1050 }}>
       <Container>
         <Navbar.Brand as={Link} to="/">
-          🏠 YoloHome
+          <img src='/home.png' alt='Home Page' width={'10%'} height={'10%'}/>
         </Navbar.Brand>
         <Navbar.Toggle aria-controls="main-nav" />
         <Navbar.Collapse id="main-nav">
@@ -39,19 +39,19 @@ export default function AppNavbar() {
                 >
                   {isAdmin && (
                     <NavDropdown.Item as={Link} to="/face/enrollments">
-                      🧑 Enrollments
+                      Enrollments
                     </NavDropdown.Item>
                   )}
-                  <NavDropdown.Item as={Link} to="/face/recognize">
-                    🔍 Recognize
+                  <NavDropdown.Item as={Link} to="/face/recognize" >
+                     Recognize
                   </NavDropdown.Item>
-                  <NavDropdown.Item as={Link} to="/face/logs">
-                    📋 Logs
+                  <NavDropdown.Item as={Link} to="/face/logs" >
+                     Logs
                   </NavDropdown.Item>
                 </NavDropdown>
                 {isAdmin && (
                   <Nav.Link as={Link} to="/admin/users" active={isActive('/admin/users')}>
-                    👑 Admin
+                     Admin
                   </Nav.Link>
                 )}
               </>
@@ -63,9 +63,9 @@ export default function AppNavbar() {
               <>
                 <Nav.Link disabled style={{ color: 'var(--text-muted)', fontWeight: 500, fontSize: '0.85rem' }}>
                   {user.username}
-                  {isAdmin && <span className="badge-admin ms-2">admin</span>}
+                  {isAdmin && <span className="border border-black rounded-pill bg-warning ms-2" style={{padding: 3}}>admin</span>}
                 </Nav.Link>
-                <Nav.Link onClick={handleLogout} style={{ color: 'var(--accent-red)', cursor: 'pointer' }}>
+                <Nav.Link onClick={handleLogout} style={{padding: 4,cursor: 'pointer'}} >
                   Logout
                 </Nav.Link>
               </>

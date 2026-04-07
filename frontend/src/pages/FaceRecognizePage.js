@@ -263,7 +263,7 @@ export default function FaceRecognizePage() {
   return (
     <Container className="py-4 fade-in">
       <div className="page-header">
-        <h1>🔍 Face Recognition</h1>
+        <h1>Face Recognition</h1>
         <p>Click recognize to open webcam, warm up 1 second, and evaluate up to 3 frames</p>
       </div>
 
@@ -275,7 +275,7 @@ export default function FaceRecognizePage() {
           <div className="yh-card p-4">
             <h5 style={{ fontWeight: 600, marginBottom: '1rem' }}>Live Camera Demo</h5>
             <Form onSubmit={handleRecognize}>
-              <div className="file-upload-zone mb-3" style={{ padding: '0.75rem' }}>
+              <div className="file-upload-zone mb-3" >
                 <video
                   ref={videoRef}
                   muted
@@ -283,10 +283,11 @@ export default function FaceRecognizePage() {
                   playsInline
                   style={{
                     width: '100%',
-                    maxHeight: '280px',
+                    height: '300px',
                     borderRadius: 'var(--radius-sm)',
                     background: 'var(--bg-input)',
                     objectFit: 'cover',
+                    border: "3px solid black"
                   }}
                 />
                 <canvas ref={captureCanvasRef} style={{ display: 'none' }} />
@@ -327,14 +328,14 @@ export default function FaceRecognizePage() {
                   {loading ? <><Spinner size="sm" animation="border" /> Recognizing...</> : '🔍 Recognize (Webcam)'}
                 </Button>
                 <Button
-                  variant="outline-light"
+                  variant="outline-dark"
                   onClick={cameraOn ? stopCamera : startCamera}
                   type="button"
                   disabled={loading || isLocked}
                 >
                   {cameraOn ? 'Stop Camera' : 'Start Camera'}
                 </Button>
-                <Button variant="outline-light" onClick={reset}>Reset</Button>
+                <Button variant="outline-dark" onClick={reset}>Reset</Button>
               </div>
 
               {cameraPermissionDenied && (
@@ -364,7 +365,7 @@ export default function FaceRecognizePage() {
                 ref={canvasRef}
                 style={{
                   width: '100%',
-                  maxHeight: '400px',
+                  maxHeight: '350px',
                   objectFit: 'contain',
                   borderRadius: 'var(--radius-sm)',
                   background: 'var(--bg-input)',
@@ -419,24 +420,10 @@ export default function FaceRecognizePage() {
                   </Col>
                 )}
 
-                {result.confidence != null && (
-                  <Col xs={6}>
-                    <div className="stat-label">Confidence</div>
-                    <div className="stat-value">{(result.confidence * 100).toFixed(2)}%</div>
-                  </Col>
-                )}
-
                 {result.matched_enrollment_id && (
                   <Col xs={6}>
                     <div className="stat-label">Enrollment ID</div>
                     <div style={{ fontWeight: 600 }}>#{result.matched_enrollment_id}</div>
-                  </Col>
-                )}
-
-                {result.detection_score != null && (
-                  <Col xs={6}>
-                    <div className="stat-label">Detection Score</div>
-                    <div style={{ fontWeight: 600 }}>{result.detection_score}</div>
                   </Col>
                 )}
 
@@ -448,24 +435,15 @@ export default function FaceRecognizePage() {
                     </div>
                   </Col>
                 )}
-
-                {result.bbox && (
-                  <Col xs={12}>
-                    <div className="stat-label">Bounding Box</div>
-                    <code style={{ color: 'var(--accent-blue)', fontSize: '0.85rem' }}>
-                      [{result.bbox.map((v) => v.toFixed(1)).join(', ')}]
-                    </code>
-                  </Col>
-                )}
               </Row>
             </div>
           )}
 
           {!preview && !result && (
-            <div className="yh-card p-4 d-flex align-items-center justify-content-center" style={{ minHeight: '200px' }}>
+            <div className="yh-card p-4 d-flex align-items-center justify-content-center" style={{ minHeight: '300px', border: '3px dashed black',marginTop: '64px' }}>
               <div className="text-center" style={{ color: 'var(--text-muted)' }}>
                 <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>🖼️</div>
-                <p>Upload an image to see the preview and recognition result here</p>
+                <p>Model recognition area</p>
               </div>
             </div>
           )}

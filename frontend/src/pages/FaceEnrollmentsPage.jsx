@@ -206,7 +206,7 @@ export default function FaceEnrollmentsPage() {
     <Container className="py-4 fade-in">
       <div className="d-flex justify-content-between align-items-start mb-4">
         <div className="page-header" style={{ marginBottom: 0 }}>
-          <h1>🧑 Face Enrollments</h1>
+          <h1>Face Enrollments</h1>
           <p>Register known faces for recognition</p>
         </div>
         <Button onClick={() => setShowEnroll(true)}>+ Enroll Face</Button>
@@ -226,11 +226,6 @@ export default function FaceEnrollmentsPage() {
               value={filterDeviceId}
               onChange={(e) => setFilterDeviceId(e.target.value)}
             />
-          </Col>
-          <Col md={2}>
-            <Button variant="outline-light" onClick={() => setFilterDeviceId('')} className="w-100">
-              Clear
-            </Button>
           </Col>
         </Row>
       </div>
@@ -336,7 +331,7 @@ export default function FaceEnrollmentsPage() {
                   <div className="d-flex gap-2 mb-2">
                     <Button
                       type="button"
-                      variant={enrollInputMode === 'upload' ? 'primary' : 'outline-light'}
+                      variant={enrollInputMode === 'upload' ? 'primary' : 'outline-dark'}
                       onClick={() => {
                         stopCamera();
                         setEnrollInputMode('upload');
@@ -346,24 +341,26 @@ export default function FaceEnrollmentsPage() {
                     </Button>
                     <Button
                       type="button"
-                      variant={enrollInputMode === 'webcam' ? 'primary' : 'outline-light'}
+                      variant={enrollInputMode === 'webcam' ? 'primary' : 'outline-dark'}
                       onClick={startCamera}
                       disabled={cameraLoading}
                     >
                       {cameraLoading ? 'Starting camera...' : 'Use Webcam'}
                     </Button>
                     {cameraActive && (
-                      <Button type="button" variant="outline-light" onClick={captureFromWebcam}>Capture</Button>
+                      <Button type="button" variant="outline-dark" onClick={captureFromWebcam}>Capture</Button>
                     )}
                   </div>
                   <div
-                    className={`file-upload-zone ${enrollFile ? 'has-file' : ''}`}
+                    className={`border rounded p-4 text-center ${enrollFile ? 'border-success bg-success bg-opacity-10' : 'border-secondary bg-light'} d-flex flex-column justify-content-center align-items-center`}
                     onClick={() => {
-                      if (enrollInputMode === 'upload' && fileInputRef.current) {
+                      stopCamera();
+                      setEnrollInputMode('upload');
+                      if (fileInputRef.current) {
                         fileInputRef.current.click();
                       }
                     }}
-                    style={{ cursor: enrollInputMode === 'webcam' ? 'default' : 'pointer' }}
+                    style={{ cursor: 'pointer', minHeight: '150px', transition: 'all 0.2s' }}
                   >
                     <input
                       type="file"
@@ -420,15 +417,35 @@ export default function FaceEnrollmentsPage() {
                 ) : (
                   <div style={{
                     width: '100%',
-                    height: '200px',
+                    height: '300px',
                     background: 'var(--bg-input)',
                     borderRadius: 'var(--radius)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     color: 'var(--text-muted)',
+                    overflow: 'hidden',
+                    position: 'relative',
+                    border: '1px solid var(--border-color, #ccc)' 
                   }}>
-                    Image preview
+                    {error ? (
+                      <span style={{ fontSize: '14px' }}>Camera unavailable</span>
+                    ) : (
+                      <video
+                        ref={videoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        style={{
+                          width: '105%',
+                          height: '300px',
+                          objectFit: 'cover',
+                          transform: 'scaleX(-1)', 
+                          backgroundColor: '#000',
+                          border: '1px solid black'
+                        }}
+                      />
+                    )}
                   </div>
                 )}
               </Col>

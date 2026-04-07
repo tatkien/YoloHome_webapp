@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Container, Table, Form, Alert, Spinner, Row, Col, Button, Modal,
+  Container, Table, Form, Alert, Spinner, Row, Col, Button, Modal, Card, Badge
 } from 'react-bootstrap';
 import api from '../services/api';
 
@@ -69,179 +69,163 @@ export default function FaceLogsPage() {
     revokePreviewUrl();
   };
 
-  // Stats
+  // Helper for status badges
+  const getStatusBadge = (status = '') => {
+    const s = status.toLowerCase();
+    if (s === 'recognized') return <Badge bg="success">Recognized</Badge>;
+    if (s.includes('spoof')) return <Badge bg="danger">Spoof</Badge>;
+    return <Badge bg="warning" text="dark">Unknown</Badge>;
+  };
+
+  // Stats calculation
   const recognized = logs.filter((l) => l.status === 'recognized').length;
   const spoof = logs.filter((l) => (l.status || '').toLowerCase().includes('spoof')).length;
   const unknown = logs.filter((l) => l.status === 'unknown').length;
 
   return (
-    <Container className="py-4 fade-in">
-      <div className="page-header">
-        <h1>📋 Recognition Logs</h1>
-        <p>View face recognition attempt history</p>
+    <Container className="py-4">
+      {/* Header */}
+      <div className="mb-4">
+        <h1 className="h3 mb-1">Recognition Logs</h1>
+        <p className="text-muted">View face recognition attempt history</p>
       </div>
 
       {error && <Alert variant="danger" dismissible onClose={() => setError('')}>{error}</Alert>}
 
-      {/* Stats */}
+      {/* Stats Cards */}
       <Row className="g-3 mb-4">
-        <Col md={3}>
-          <div className="yh-card p-3 text-center">
-            <div className="stat-value">{logs.length}</div>
-            <div className="stat-label">Total Logs</div>
-          </div>
-        </Col>
-        <Col md={3}>
-          <div className="yh-card p-3 text-center">
-            <div style={{ fontSize: '1.8rem', fontWeight: 700, color: 'var(--accent-green)' }}>{recognized}</div>
-            <div className="stat-label">Recognized</div>
-          </div>
-        </Col>
-        <Col md={3}>
-          <div className="yh-card p-3 text-center">
-            <div style={{ fontSize: '1.8rem', fontWeight: 700, color: 'var(--accent-red)' }}>{spoof}</div>
-            <div className="stat-label">Spoof</div>
-          </div>
-        </Col>
-        <Col md={3}>
-          <div className="yh-card p-3 text-center">
-            <div style={{ fontSize: '1.8rem', fontWeight: 700, color: 'var(--accent-yellow)' }}>{unknown}</div>
-            <div className="stat-label">Unknown</div>
-          </div>
-        </Col>
+        {[
+          { label: 'Total Logs', value: logs.length, color: 'dark' },
+          { label: 'Recognized', value: recognized, color: 'success' },
+          { label: 'Spoof', value: spoof, color: 'danger' },
+          { label: 'Unknown', value: unknown, color: 'warning' },
+        ].map((stat, idx) => (
+          <Col md={3} key={idx}>
+            <Card className="text-center border-0 shadow-sm">
+              <Card.Body>
+                <div className={`h2 fw-bold text-${stat.color}`}>{stat.value}</div>
+                <div className="small text-muted text-uppercase fw-semibold">{stat.label}</div>
+              </Card.Body>
+            </Card>
+          </Col>
+        ))}
       </Row>
 
-      {/* Filters */}
-      <div className="yh-card p-3 mb-4">
-        <Row className="align-items-end g-3">
-          <Col md={3}>
-            <Form.Label>Device ID</Form.Label>
-            <Form.Control
-              type="number"
-              placeholder="All devices"
-              value={filterDeviceId}
-              onChange={(e) => setFilterDeviceId(e.target.value)}
-            />
-          </Col>
-          <Col md={3}>
-            <Form.Label>Limit</Form.Label>
-            <Form.Select value={limit} onChange={(e) => setLimit(Number(e.target.value))}>
-              <option value={25}>25</option>
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-            </Form.Select>
-          </Col>
-          <Col md={2}>
-            <Button variant="outline-light" onClick={() => { setFilterDeviceId(''); setLimit(100); }} className="w-100">
-              Clear
-            </Button>
-          </Col>
-          <Col md={2}>
-            <Button onClick={fetchLogs} className="w-100">Refresh</Button>
-          </Col>
-        </Row>
-      </div>
+      {/* Filters Card */}
+      <Card className="border-0 shadow-sm mb-4">
+        <Card.Body>
+          <Form>
+            <Row className="align-items-end g-3">
+              <Col md={3}>
+                <Form.Group>
+                  <Form.Label className="small fw-bold">Device ID</Form.Label>
+                  <Form.Control
+                    type="number"
+                    placeholder="All devices"
+                    value={filterDeviceId}
+                    onChange={(e) => setFilterDeviceId(e.target.value)}
+                  />
+                </Form.Group>
+              </Col>
+              <Col md={3}>
+                <Form.Group>
+                  <Form.Label className="small fw-bold">Limit</Form.Label>
+                  <Form.Select value={limit} onChange={(e) => setLimit(Number(e.target.value))}>
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                  </Form.Select>
+                </Form.Group>
+              </Col>
+            </Row>
+          </Form>
+        </Card.Body>
+      </Card>
 
-      {/* Logs Table */}
-      <div className="yh-card p-4">
-        {loading ? (
-          <div className="text-center py-4"><Spinner animation="border" /></div>
-        ) : logs.length === 0 ? (
-          <p style={{ color: 'var(--text-muted)' }}>No recognition logs found.</p>
-        ) : (
-          <div className="table-responsive">
-            <Table hover>
-              <thead>
+      {/* Main Table Card */}
+      <Card className="border-0 shadow-sm">
+        <Card.Body className="p-0">
+          {loading ? (
+            <div className="text-center py-5"><Spinner animation="border" variant="primary" /></div>
+          ) : logs.length === 0 ? (
+            <div className="text-center py-5 text-muted">No recognition logs found.</div>
+          ) : (
+            <Table hover responsive className="mb-0 align-middle">
+              <thead className="bg-light text-muted small text-uppercase">
                 <tr>
-                  <th>ID</th>
+                  <th className="px-4">ID</th>
                   <th>Image</th>
                   <th>Status</th>
-                  <th>Confidence</th>
                   <th>Matched Enrollment</th>
                   <th>Matched User</th>
                   <th>Device</th>
-                  <th>Timestamp</th>
+                  <th className="px-4">Timestamp</th>
                 </tr>
               </thead>
               <tbody>
                 {logs.map((log) => (
                   <tr key={log.id}>
-                    <td>{log.id}</td>
+                    <td className="px-4 text-muted">#{log.id}</td>
                     <td>
                       <Button
-                        type="button"
                         size="sm"
-                        variant="outline-light"
+                        variant="outline-primary"
                         onClick={() => handleShowImage(log)}
                       >
-                        Show Image
+                        Preview
                       </Button>
                     </td>
+                    <td>{getStatusBadge(log.status)}</td>
                     <td>
-                      <span className={(log.status || '').toLowerCase() === 'recognized'
-                        ? 'badge-recognized'
-                        : ((log.status || '').toLowerCase().includes('spoof') ? 'badge-spoof' : 'badge-unknown')}
-                      >
-                        {log.status}
-                      </span>
-                    </td>
-                    <td>
-                      {log.confidence != null ? (
-                        <span style={{
-                          fontWeight: 600,
-                          color: log.confidence >= 0.7 ? 'var(--accent-green)'
-                            : log.confidence >= 0.4 ? 'var(--accent-yellow)'
-                            : 'var(--accent-red)',
-                        }}>
-                          {(log.confidence * 100).toFixed(2)}%
-                        </span>
+                      {log.matched_enrollment_id ? (
+                        <span className="fw-bold text-primary">#{log.matched_enrollment_id}</span>
                       ) : (
-                        <span style={{ color: 'var(--text-muted)' }}>—</span>
+                        <span className="text-muted">—</span>
                       )}
-                    </td>
-                    <td>
-                      {log.matched_enrollment_id
-                        ? <span style={{ fontWeight: 600 }}>#{log.matched_enrollment_id}</span>
-                        : <span style={{ color: 'var(--text-muted)' }}>—</span>
-                      }
                     </td>
                     <td>
                       {log.matched_user_id ? (
-                        <span style={{ fontWeight: 600 }}>
-                          {log.matched_user_name || `User #${log.matched_user_id}`}
-                          <small style={{ color: 'var(--text-muted)', marginLeft: '0.4rem' }}>#{log.matched_user_id}</small>
-                        </span>
+                        <div>
+                          <div className="fw-bold">{log.matched_user_name || 'User'}</div>
+                          <div className="small text-muted">ID: {log.matched_user_id}</div>
+                        </div>
                       ) : (
-                        <span style={{ color: 'var(--text-muted)' }}>—</span>
+                        <span className="text-muted">—</span>
                       )}
                     </td>
-                    <td>{log.device_id ?? <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
-                    <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                    <td>
+                      <Badge bg="light" text="dark" className="border" style={{marginRight: '12px'}}>
+                        {log.device_id ?? 'Unknown'}
+                      </Badge>
+                    </td>
+                    <td className="px-4 text-muted small">
                       {new Date(log.created_at).toLocaleString()}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </Table>
-          </div>
-        )}
-      </div>
+          )}
+        </Card.Body>
+      </Card>
 
+      {/* Image Modal */}
       <Modal show={Boolean(previewLogId)} onHide={closePreview} centered size="lg">
-        <Modal.Header closeButton>
-          <Modal.Title>{previewLogId ? `Recognition Log #${previewLogId}` : 'Recognition Log'}</Modal.Title>
+        <Modal.Header closeButton className="border-0 pb-0">
+          <Modal.Title className="h5">Log #{previewLogId}</Modal.Title>
         </Modal.Header>
-        <Modal.Body>
+        <Modal.Body className="text-center p-4">
           {previewLoading ? (
-            <div className="text-center py-4"><Spinner animation="border" /></div>
+            <Spinner animation="border" variant="primary" />
           ) : (previewLogId && previewImageUrl) ? (
             <img
               src={previewImageUrl}
-              alt={`Recognition log ${previewLogId}`}
-              style={{ width: '100%', borderRadius: '10px' }}
+              alt="Recognition log"
+              className="img-fluid rounded shadow-sm"
+              style={{ maxHeight: '70vh' }}
             />
           ) : (
-            <p style={{ color: 'var(--text-muted)', margin: 0 }}>Image unavailable.</p>
+            <p className="text-muted mb-0">Image unavailable.</p>
           )}
         </Modal.Body>
       </Modal>
