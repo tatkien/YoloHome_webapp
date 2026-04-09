@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Container, Table, Form, Alert, Spinner, Row, Col, Button } from 'react-bootstrap';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  Container, Table, Form, Alert, Spinner, Row, Col, Button, Modal,
+} from 'react-bootstrap';
 import api from '../services/api';
 
 export default function FaceLogsPage() {
@@ -8,6 +10,10 @@ export default function FaceLogsPage() {
   const [error, setError] = useState('');
   const [filterDeviceId, setFilterDeviceId] = useState('');
   const [limit, setLimit] = useState(100);
+  const [previewLogId, setPreviewLogId] = useState(null);
+  const [previewImageUrl, setPreviewImageUrl] = useState('');
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const previewImageUrlRef = useRef('');
 
   const fetchLogs = useCallback(async () => {
     try {
@@ -24,6 +30,44 @@ export default function FaceLogsPage() {
   }, [filterDeviceId, limit]);
 
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
+
+  const revokePreviewUrl = useCallback(() => {
+    if (previewImageUrlRef.current) {
+      URL.revokeObjectURL(previewImageUrlRef.current);
+      previewImageUrlRef.current = '';
+    }
+  }, []);
+
+  useEffect(() => () => {
+    revokePreviewUrl();
+  }, [revokePreviewUrl]);
+
+  const handleShowImage = async (log) => {
+    setError('');
+    setPreviewLoading(true);
+    setPreviewLogId(log.id);
+    revokePreviewUrl();
+    setPreviewImageUrl('');
+
+    try {
+      const endpoint = `/face/logs/${log.id}/image`;
+      const res = await api.get(endpoint, { responseType: 'blob' });
+      const objectUrl = URL.createObjectURL(res.data);
+      previewImageUrlRef.current = objectUrl;
+      setPreviewImageUrl(objectUrl);
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to load image');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const closePreview = () => {
+    setPreviewLogId(null);
+    setPreviewImageUrl('');
+    setPreviewLoading(false);
+    revokePreviewUrl();
+  };
 
   // Stats
   const recognized = logs.filter((l) => l.status === 'recognized').length;
@@ -110,6 +154,7 @@ export default function FaceLogsPage() {
               <thead>
                 <tr>
                   <th>ID</th>
+                  <th>Image</th>
                   <th>Status</th>
                   <th>Confidence</th>
                   <th>Matched Enrollment</th>
@@ -122,6 +167,16 @@ export default function FaceLogsPage() {
                 {logs.map((log) => (
                   <tr key={log.id}>
                     <td>{log.id}</td>
+                    <td>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline-light"
+                        onClick={() => handleShowImage(log)}
+                      >
+                        Show Image
+                      </Button>
+                    </td>
                     <td>
                       <span className={(log.status || '').toLowerCase() === 'recognized'
                         ? 'badge-recognized'
@@ -171,6 +226,25 @@ export default function FaceLogsPage() {
           </div>
         )}
       </div>
+
+      <Modal show={Boolean(previewLogId)} onHide={closePreview} centered size="lg">
+        <Modal.Header closeButton>
+          <Modal.Title>{previewLogId ? `Recognition Log #${previewLogId}` : 'Recognition Log'}</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {previewLoading ? (
+            <div className="text-center py-4"><Spinner animation="border" /></div>
+          ) : (previewLogId && previewImageUrl) ? (
+            <img
+              src={previewImageUrl}
+              alt={`Recognition log ${previewLogId}`}
+              style={{ width: '100%', borderRadius: '10px' }}
+            />
+          ) : (
+            <p style={{ color: 'var(--text-muted)', margin: 0 }}>Image unavailable.</p>
+          )}
+        </Modal.Body>
+      </Modal>
     </Container>
   );
 }
