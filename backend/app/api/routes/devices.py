@@ -5,7 +5,6 @@ import sqlalchemy as sa
 from sqlalchemy.orm import selectinload
 from pydantic import BaseModel, Field
 
-# Import các thành phần hệ thống của bạn
 from app.api.deps import get_current_user, get_admin_user, get_db
 from app.models.device import Device
 from app.models.user import User
@@ -37,8 +36,8 @@ async def list_hardware_nodes(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user)
 ):
-    """Lấy danh sách bo mạch YoloBit và các chân (pins)"""
-    # Gắn selectinload để Database gói luôn các thiết bị con đi kèm, không bị lỗi Lazy Load
+    """Lấy danh sách mạch YoloBit và các chân (pins)"""
+    # Gắn selectinload để Database gói luôn các thiết bị con đi kèm
     query = sa.select(HardwareNode).options(selectinload(HardwareNode.devices))
     result = await db.execute(query)
     return result.scalars().unique().all() 
@@ -47,7 +46,7 @@ async def list_hardware_nodes(
 async def read_hardware_node(
     hardware_id: str, 
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user) # Đã khôi phục khoá User
+    _: User = Depends(get_current_user)
 ):
     """Xem chi tiết 1 bo mạch"""
     query = sa.select(HardwareNode).where(HardwareNode.id == hardware_id).options(selectinload(HardwareNode.devices))
@@ -62,27 +61,40 @@ async def read_hardware_node(
 async def delete_hardware_node(
     hardware_id: str, 
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user) # Đã khôi phục khoá Admin
+    admin: User = Depends(get_admin_user)
 ):
-    """XOÁ bo mạch và tự động xóa tất cả thiết bị con thuộc về mạch này"""
-    # 1. Tìm bo mạch
+    """XOÁ mạch và tự động xóa tất cả thiết bị con thuộc về mạch này"""
+    # 1. Tìm mạch
     result = await db.execute(sa.select(HardwareNode).where(HardwareNode.id == hardware_id))
     node = result.scalar_one_or_none()
     
     if not node:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Không tìm thấy bo mạch")
 
-    # 2. Xóa bo mạch (Database sẽ tự lo phần xoá các thiết bị con nhờ Cascade)
+    # 2. Xóa bo mạch (xoá các thiết bị con đi kèm)
     await db.delete(node)
     await db.commit()
 
 
 # --- PHẦN 1: CRUD QUẢN LÝ THIẾT BỊ ---
 
+@router.post("/", response_model=DeviceRead)
+async def create_device(
+    payload: DeviceCreate, # Chứa tên, hardware_id, pin...
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Admin tạo thiết bị mới gắn với pin mạch gửi lên - device_id sinh ra"""
+    new_device = Device(**payload.model_dump())
+    db.add(new_device)
+    await db.commit()
+    await db.refresh(new_device)
+    return new_device
+
 @router.get("/", response_model=List[DeviceRead])
 async def list_devices(
     db: AsyncSession = Depends(get_db), 
-    _: User = Depends(get_current_user) # Đã khôi phục khoá User
+    _: User = Depends(get_current_user) 
 ):
     """Lấy danh sách tất cả thiết bị"""
     result = await db.execute(sa.select(Device).order_by(Device.createdAt.desc()))
@@ -92,7 +104,7 @@ async def list_devices(
 async def read_device(
     device_id: str, 
     db: AsyncSession = Depends(get_db), 
-    _: User = Depends(get_current_user) # Đã khôi phục khoá User
+    _: User = Depends(get_current_user) 
 ):
     """Xem chi tiết 1 thiết bị"""
     return await _get_device_or_404(db, device_id)
@@ -102,7 +114,7 @@ async def update_device(
     device_id: str, 
     payload: DeviceUpdate, 
     db: AsyncSession = Depends(get_db), 
-    admin: User = Depends(get_admin_user) # Đã khôi phục khoá Admin
+    admin: User = Depends(get_admin_user)
 ):
     """Cập nhật thông tin (Tên, phòng, loại...)"""
     device = await _get_device_or_404(db, device_id)
@@ -115,14 +127,15 @@ async def update_device(
     await db.refresh(device)
     
     # Broadcast cập nhật UI
-    await realtime_manager.broadcast_device_event(device_id, {"type": "device.updated"})
+    await realtime_manager.broadcast_device_state(device_id, {"event": "info_updated", "name": device.name,
+    "room": device.room,})
 
     # Thêm log lịch sử
     await add_history_record(
         device_id=device.id,
         device_name=device.name,
         action="Cập nhật thông tin cấu hình thiết bị",
-        actor=str(admin.id), # Lấy ID thực tế
+        actor=str(admin.id),
         source="Web API (Update)"
     )
 
@@ -132,7 +145,7 @@ async def update_device(
 async def delete_device(
     device_id: str, 
     db: AsyncSession = Depends(get_db), 
-    admin: User = Depends(get_admin_user) # Đã khôi phục khoá Admin
+    admin: User = Depends(get_admin_user)
 ):
     """Xóa thiết bị"""
     device = await _get_device_or_404(db, device_id)
@@ -148,7 +161,7 @@ async def delete_device(
         device_id=device_id,
         device_name=deleted_device_name,
         action="Xóa thiết bị khỏi hệ thống",
-        actor=str(admin.id), # Lấy ID thực tế
+        actor=str(admin.id),
         source="Web API (Delete)"
     )
 
@@ -191,7 +204,7 @@ async def send_command(
             device_id=device.id,
             device_name=device.name,
             action=action_detail,
-            actor=str(user.id), # Lấy ID thực tế
+            actor=str(user.id), 
             source="Web Command"
         )
     except Exception as e:
@@ -208,12 +221,12 @@ async def create_schedule(
     device_id: str, 
     payload: DeviceScheduleCreate, 
     db: AsyncSession = Depends(get_db), 
-    user: User = Depends(get_current_user) # Đã khôi phục khoá User
+    user: User = Depends(get_current_user)
 ):
     """Hẹn giờ cho thiết bị"""
     device = await _get_device_or_404(db, device_id)
         
-    schedule = DeviceSchedule( # Lưu ý: Cần import DeviceSchedule nếu chưa có
+    schedule = DeviceSchedule( 
         device_id=device_id, 
         action=payload.action,
         time_of_day=payload.time_of_day.replace(second=0, microsecond=0),
@@ -226,7 +239,7 @@ async def create_schedule(
 @router.get("/docs-websocket-info", tags=["Tài liệu WebSocket (Chỉ tra cứu)"])
 async def websocket_documentation_only():
     """
-    ### ⚠️ LƯU Ý: ĐÂY LÀ API GIẢ (DÙNG ĐỂ TRA CỨU TÀI LIỆU)
+    ### LƯU Ý: ĐÂY LÀ API GIẢ (DÙNG ĐỂ TRA CỨU TÀI LIỆU)
     **không bấm "Execute" vì API này không trả về dữ liệu thực.**
     
     Hệ thống sử dụng WebSocket để cập nhật dữ liệu thời gian thực (Real-time). Dưới đây là hướng dẫn kết nối:
@@ -267,7 +280,5 @@ async def websocket_documentation_only():
       "data": { "value": 2, "isOn": true, "status": "success" }
     }
     ```
-    ---
-    **Công cụ test khuyến nghị:** [Postman] (Chọn WebSocket).
     """
     return {"detail": "Đây là trang tài liệu, không phải API thực tế."}

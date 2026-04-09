@@ -59,7 +59,7 @@ async def hardware_stream(
 # ==========================================
 # ENDPOINT 2: LẮNG NGHE PHẢN HỒI TRẠNG THÁI (Theo Từng Thiết Bị)
 # ==========================================
-@router.websocket("/ws/devices/{device_id}")
+@router.websocket("/ws/device/{device_id}")
 async def device_stream(
     websocket: WebSocket,
     device_id: str,
