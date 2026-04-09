@@ -68,6 +68,23 @@ def _image_media_type(path: str) -> str:
     return guessed_type or "application/octet-stream"
 
 
+def _remove_file_if_exists(path: str | None) -> None:
+    if path and os.path.isfile(path):
+        os.remove(path)
+
+
+def _save_enrollment_image(contents: bytes, filename: str | None) -> str:
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    ext = "jpg"
+    if filename and "." in filename:
+        ext = filename.rsplit(".", 1)[-1].lower()
+    saved_filename = f"{uuid.uuid4().hex}.{ext}"
+    image_path = os.path.join(UPLOAD_DIR, saved_filename)
+    with open(image_path, "wb") as file_handle:
+        file_handle.write(contents)
+    return image_path
+
+
 async def _get_user_or_404(db: AsyncSession, user_id: int) -> User:
     result = await db.execute(sa.select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -104,6 +121,8 @@ async def list_enrollments(
                 user_id=enrollment.user_id,
                 user_name=_user_display_name(full_name, username),
                 feature_vector=_vector_to_list(enrollment.feature_vector) or [],
+                image_path=enrollment.image_path,
+                bbox=_vector_to_list(enrollment.bbox),
                 device_id=enrollment.device_id,
                 created_at=enrollment.created_at,
             )
@@ -148,7 +167,7 @@ async def create_enrollment_from_image(
         )
 
     # Use the highest-confidence face
-    _, embedding, _, _ = results[0]
+    bbox, embedding, _, _ = results[0]
 
     # Anti-spoofing gate: embedding is None when face is classified as spoof
     if embedding is None:
@@ -157,9 +176,13 @@ async def create_enrollment_from_image(
             detail="Spoofed face detected — enrollment rejected",
         )
 
+    image_path = _save_enrollment_image(contents, image.filename)
+
     enrollment = FaceEnrollment(
         user_id=user_id,
         feature_vector=embedding.tolist(),
+        image_path=image_path,
+        bbox=bbox.tolist(),
         device_id=device_id,
     )
     db.add(enrollment)
@@ -170,6 +193,8 @@ async def create_enrollment_from_image(
         user_id=enrollment.user_id,
         user_name=_user_display_name(user.full_name, user.username),
         feature_vector=_vector_to_list(enrollment.feature_vector) or [],
+        image_path=enrollment.image_path,
+        bbox=_vector_to_list(enrollment.bbox),
         device_id=enrollment.device_id,
         created_at=enrollment.created_at,
     )
@@ -187,6 +212,7 @@ async def delete_enrollment(
     enrollment = result.scalar_one_or_none()
     if enrollment is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Enrollment not found")
+    _remove_file_if_exists(enrollment.image_path)
     await db.delete(enrollment)
     await db.commit()
     # await reset_sequence_to_min_gap(db, "face_enrollments", "face_enrollments_id_seq")
@@ -479,6 +505,27 @@ async def get_recognition_log_image(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recognition log not found")
     if not os.path.isfile(image_path):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recognition log image not found")
+
+    return FileResponse(
+        path=image_path,
+        media_type=_image_media_type(image_path),
+        filename=os.path.basename(image_path),
+    )
+    
+@router.get("/enrollments/{enrollment_id}/image", summary="Return the stored image for a face enrollment")
+async def get_face_enrollment_image(
+    enrollment_id: int,
+    _: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        sa.select(FaceEnrollment.image_path).where(FaceEnrollment.id == enrollment_id)
+    )
+    image_path = result.scalar_one_or_none()
+    if image_path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Face enrollment image not found")
+    if not os.path.isfile(image_path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Face enrollment image not found")
 
     return FileResponse(
         path=image_path,

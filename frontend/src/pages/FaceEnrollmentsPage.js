@@ -12,6 +12,12 @@ export default function FaceEnrollmentsPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [filterDeviceId, setFilterDeviceId] = useState('');
+  const [showImageModal, setShowImageModal] = useState(false);
+  const [selectedEnrollment, setSelectedEnrollment] = useState(null);
+  const [selectedEnrollmentImageUrl, setSelectedEnrollmentImageUrl] = useState('');
+  const [selectedEnrollmentImageLoading, setSelectedEnrollmentImageLoading] = useState(false);
+  const [selectedEnrollmentImageError, setSelectedEnrollmentImageError] = useState('');
+  const [selectedEnrollmentImageNaturalSize, setSelectedEnrollmentImageNaturalSize] = useState(null);
 
   // Enroll modal
   const [showEnroll, setShowEnroll] = useState(false);
@@ -55,6 +61,12 @@ export default function FaceEnrollmentsPage() {
 
   useEffect(() => { fetchEnrollments(); }, [fetchEnrollments]);
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
+
+  useEffect(() => () => {
+    if (selectedEnrollmentImageUrl) {
+      URL.revokeObjectURL(selectedEnrollmentImageUrl);
+    }
+  }, [selectedEnrollmentImageUrl]);
 
   useEffect(() => {
     if (!cameraActive || enrollInputMode !== 'webcam') return;
@@ -189,6 +201,47 @@ export default function FaceEnrollmentsPage() {
     }
   };
 
+  const openEnrollmentImage = async (enrollment) => {
+    if (!enrollment?.image_path) return;
+    setSelectedEnrollment(enrollment);
+    setSelectedEnrollmentImageError('');
+    setSelectedEnrollmentImageLoading(true);
+    setSelectedEnrollmentImageNaturalSize(null);
+    setShowImageModal(true);
+
+    try {
+      const res = await api.get(`/face/enrollments/${enrollment.id}/image`, { responseType: 'blob' });
+      const objectUrl = URL.createObjectURL(res.data);
+      setSelectedEnrollmentImageUrl((currentUrl) => {
+        if (currentUrl) URL.revokeObjectURL(currentUrl);
+        return objectUrl;
+      });
+    } catch (err) {
+      setSelectedEnrollmentImageError(err.response?.data?.detail || 'Failed to load enrollment image');
+    } finally {
+      setSelectedEnrollmentImageLoading(false);
+    }
+  };
+
+  const closeEnrollmentImageModal = () => {
+    setShowImageModal(false);
+    setSelectedEnrollment(null);
+    setSelectedEnrollmentImageError('');
+    setSelectedEnrollmentImageLoading(false);
+    setSelectedEnrollmentImageNaturalSize(null);
+    setSelectedEnrollmentImageUrl((currentUrl) => {
+      if (currentUrl) URL.revokeObjectURL(currentUrl);
+      return '';
+    });
+  };
+
+  const handleEnrollmentImageLoad = (event) => {
+    setSelectedEnrollmentImageNaturalSize({
+      width: event.currentTarget.naturalWidth,
+      height: event.currentTarget.naturalHeight,
+    });
+  };
+
   const resetEnrollForm = () => {
     stopCamera();
     setEnrollUserId('');
@@ -252,6 +305,7 @@ export default function FaceEnrollmentsPage() {
               <thead>
                 <tr>
                   <th>ID</th>
+                  <th>Image</th>
                   <th>User</th>
                   <th>Device</th>
                   <th>Vector Dim</th>
@@ -263,6 +317,16 @@ export default function FaceEnrollmentsPage() {
                 {enrollments.map((e) => (
                   <tr key={e.id}>
                     <td>{e.id}</td>
+                    <td>
+                      <Button
+                        variant="outline-light"
+                        size="sm"
+                        disabled={!e.image_path}
+                        onClick={() => openEnrollmentImage(e)}
+                      >
+                        Show Image
+                      </Button>
+                    </td>
                     <td style={{ fontWeight: 600 }}>
                       {e.user_name || `User #${e.user_id}`}
                       {e.user_id ? (
@@ -443,6 +507,86 @@ export default function FaceEnrollmentsPage() {
             </Button>
           </Modal.Footer>
         </Form>
+      </Modal>
+
+      <Modal show={showImageModal} onHide={closeEnrollmentImageModal} centered size="lg">
+        <Modal.Header closeButton>
+          <Modal.Title>
+            {selectedEnrollment ? `Enrollment #${selectedEnrollment.id} Image` : 'Enrollment Image'}
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {selectedEnrollmentImageError ? (
+            <Alert variant="danger" className="mb-0">
+              {selectedEnrollmentImageError}
+            </Alert>
+          ) : selectedEnrollmentImageLoading ? (
+            <div className="text-center py-4">
+              <Spinner animation="border" />
+            </div>
+          ) : selectedEnrollmentImageUrl ? (
+            <div style={{ position: 'relative', width: '100%' }}>
+              <img
+                src={selectedEnrollmentImageUrl}
+                alt={selectedEnrollment ? `Enrollment ${selectedEnrollment.id}` : 'Enrollment'}
+                onLoad={handleEnrollmentImageLoad}
+                style={{
+                  width: '100%',
+                  height: 'auto',
+                  display: 'block',
+                  borderRadius: 'var(--radius)',
+                  border: '1px solid var(--border-color)',
+                }}
+              />
+              {selectedEnrollment?.bbox && selectedEnrollmentImageNaturalSize ? (() => {
+                const [x1, y1, x2, y2] = selectedEnrollment.bbox;
+                const { width, height } = selectedEnrollmentImageNaturalSize;
+                const left = (x1 / width) * 100;
+                const top = (y1 / height) * 100;
+                const boxWidth = ((x2 - x1) / width) * 100;
+                const boxHeight = ((y2 - y1) / height) * 100;
+                return (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: `${left}%`,
+                      top: `${top}%`,
+                      width: `${boxWidth}%`,
+                      height: `${boxHeight}%`,
+                      border: '2px solid #ff5b5b',
+                      boxShadow: '0 0 0 1px rgba(0,0,0,0.15)',
+                      pointerEvents: 'none',
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: '-1.7rem',
+                        left: 0,
+                        background: '#ff5b5b',
+                        color: '#fff',
+                        fontSize: '0.75rem',
+                        fontWeight: 700,
+                        padding: '0.2rem 0.45rem',
+                        borderRadius: '0.35rem',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      bbox
+                    </div>
+                  </div>
+                );
+              })() : null}
+            </div>
+          ) : (
+            <div className="text-center py-4" style={{ color: 'var(--text-muted)' }}>
+              No image available.
+            </div>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="outline-light" onClick={closeEnrollmentImageModal}>Close</Button>
+        </Modal.Footer>
       </Modal>
     </Container>
   );

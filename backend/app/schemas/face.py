@@ -11,6 +11,8 @@ class FaceEnrollmentRead(BaseModel):
     user_id: int
     user_name: str | None = None
     feature_vector: list[float]
+    image_path: str | None = None
+    bbox: list[float] | None = None
     device_id: int | None = None
     created_at: datetime
 
