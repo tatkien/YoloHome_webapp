@@ -27,7 +27,7 @@ class Device(Base):
     createdBy = sa.Column(sa.String(128))
     hardwareId = sa.Column(sa.String(64), sa.ForeignKey("hardware_nodes.id"), nullable=True)
     node = relationship("HardwareNode", back_populates="devices")
-    pin = sa.Column(sa.String(32), nullable=True)
+    pin = sa.Column(sa.String(32), nullable=True) 
     last_seen_at = sa.Column(sa.DateTime(timezone=True), nullable=True)
     scheduledOnTime = sa.Column(sa.String(32))
     scheduledOffTime = sa.Column(sa.String(32))

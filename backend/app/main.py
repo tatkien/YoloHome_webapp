@@ -39,10 +39,21 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
 )
-
+"""
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+"""
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "https://ais-dev-vkydgq6yhjsaeqxmdlnmdh-44308755185.asia-east1.run.app" # URL của giao diện này
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

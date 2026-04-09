@@ -21,6 +21,8 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:REDACTED@db:5432/yolohome
+      MQTT_BROKER_URL: mqtt
+      MQTT_PORT: 1883
       SECRET_KEY: changeme
       DEBUG: "true"
     ports:
@@ -47,6 +49,18 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    
+  mqtt:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log  
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
 
 volumes:
   postgres_data:
+  mosquitto_data:
+  mosquitto_log:

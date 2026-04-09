@@ -10,6 +10,7 @@ class DeviceType(str, Enum):
     LOCK = "lock"
     TEMP = "temp_sensor"
     HUMI = "humidity_sensor"
+    UNKNOWN = "unknown"
 
 class DeviceBase(BaseModel):
     name: str
@@ -24,6 +25,8 @@ class DeviceCreate(DeviceBase):
 class DeviceUpdate(BaseModel):
     name: Optional[str] = None
     room: Optional[str] = None
+    type: Optional[DeviceType] = None
+    description: Optional[str] = None
 
 class DeviceRead(DeviceBase):
     id: str

@@ -1,198 +1,225 @@
-import network
-import time
-import ubinascii
+import network, time, ubinascii
 import ujson as json
 from yolobit import *
-from machine import Pin, unique_id, I2C
-from umqtt.simple import MQTTClient
+from machine import Pin, unique_id, SoftI2C, PWM
 
-display.show(Image.HAPPY)
+try:
+    from umqtt.robust import MQTTClient
+    HAS_MQTT_LIB = True
+except:
+    HAS_MQTT_LIB = False
+    print("Thiếu umqtt.robust")
 
-# --- 1. CẤU HÌNH ---
-WIFI_SSID = "Tên_WiFi"
-WIFI_PASS = "Mật_Khẩu"
-MQTT_BROKER = "x.x.x.x"
+# --- 2. CLASS DHT20 ---
+class DHT20:
+    def __init__(self, i2c, address=0x38):
+        self.i2c = i2c
+        self.address = address
+        self._temp, self._humi = 0, 0
+        time.sleep_ms(500)
+        try: self.reset_register()
+        except: pass
+
+    def is_ready(self):
+        try:
+            status = self.i2c.readfrom(self.address, 1)[0]
+            return (status & 0x08) == 0x08
+        except: return False
+
+    def reset_register(self):
+        try: self.i2c.writeto(self.address, b'\xbe\x08\x00')
+        except: pass
+
+    def read(self):
+        self.i2c.writeto(self.address, b'\xac\x33\x00')
+        for _ in range(10):
+            time.sleep_ms(10)
+            status = self.i2c.readfrom(self.address, 1)[0]
+            if (status & 0x80) == 0: break
+        
+        data = self.i2c.readfrom(self.address, 7)
+        hraw = ((data[1] << 12) | (data[2] << 4) | (data[3] >> 4))
+        self._humi = hraw * 100 / 1048576
+        traw = (((data[3] & 0x0F) << 16) | (data[4] << 8) | data[5])
+        self._temp = traw * 200 / 1048576 - 50
+
+    def temp(self): return int(round(self._temp, 1))
+    def humi(self): return int(round(self._humi, 1))
+
+# --- 3. CẤU HÌNH ---
+WIFI_SSID, WIFI_PASS = "G35", "12345678"
+MQTT_BROKER = "10.49.109.71" 
+
+ID = ubinascii.hexlify(unique_id()).decode()
+TOPIC_ANNOUNCE = f"smart_home/hardware/{ID}/announce"
+TOPIC_SEN = f"smart_home/hardware/{ID}/sensor"
+TOPIC_COM = f"smart_home/hardware/{ID}/command"
+TOPIC_STA = f"smart_home/hardware/{ID}/state"
+
+# KHỞI TẠO PHẦN CỨNG
+display.show(Image.HEART)
+i2c = SoftI2C(scl=Pin(19), sda=Pin(20)) 
+servo_p12 = PWM(Pin(pin12.pin), freq=50)
 PIN_MAP = {"P0": pin0, "P1": pin1, "P2": pin2}
 
-HARDWARE_ID = ubinascii.hexlify(unique_id()).decode()
-# Các topic MQTT
-TOPIC_ANNOUNCE = "smart_home/hardware/{}/announce".format(HARDWARE_ID)
-TOPIC_SENSOR   = "smart_home/hardware/{}/sensor".format(HARDWARE_ID)
-TOPIC_COMMAND  = "smart_home/hardware/{}/command".format(HARDWARE_ID)
-TOPIC_STATE    = "smart_home/hardware/{}/state".format(HARDWARE_ID)
+dht_sensor = None
+try:
+    dht_sensor = DHT20(i2c)
+    print("DHT20: OK")
+except:
+    print("DHT20: Không tìm thấy")
 
-i2c = I2C(0, scl=Pin(19), sda=Pin(20))
-servo_p12 = PWM(Pin(pin12.pin), freq=50)
-
-# --- 2. DRIVER & QUẢN LÝ KẾT NỐI ---
-class DHT20:
-    def __init__(self, i2c):
-        self.i2c = i2c
-        self.addr = 0x38
-    def read(self):
-        try:
-            self.i2c.writeto(self.addr, b'\xac\x33\x00')
-            time.sleep_ms(80)
-            data = self.i2c.readfrom(self.addr, 7)
-            hum = ((data[1] << 12) | (data[2] << 4) | (data[3] >> 4)) * 100 / 1048576
-            temp = (((data[3] & 0x0F) << 16) | (data[4] << 8) | data[5]) * 200 / 1048576 - 50
-            return int(round(temp)), int(round(hum))
-        except Exception as e: 
-            print("Lỗi đọc DHT20:", e)
-            return None, None
-
-dht = DHT20(i2c)
-wlan = network.WLAN(network.STA_IF)
-wlan.active(True)
-client = MQTTClient(HARDWARE_ID, MQTT_BROKER)
-
-#Tự kết nối
-mqtt_connected = False
-last_reconnect_attempt = 0
-
-#Servo
 servo_is_open = False
 open_start_time = 0
+last_sensor_send = 0
+last_wifi_attempt = 0
+last_display_time = 0
+mqtt_setup_done = False
 
-def quay_servo(goc):
-    # Biến đổi từ GÓC sang DUTY
-    goc = int(goc)
-    if goc < 0: goc = 0
-    if goc > 180: goc = 180
-
-    gia_tri_duty = int((goc / 180) * 102 + 26)
-    servo_p12.duty(gia_tri_duty)
-    print(f"Servo -> {goc} độ (Duty: {gia_tri_duty})")
-
+# --- 4. MQTT CALLBACK ---
 def sub_cb(topic, msg):
-    """Xử lý lệnh JSON"""
-    global servo_is_open, open_start_time
+    global servo_is_open, open_start_time, last_display_time
     try:
         data = json.loads(msg)
-        pin_name = data.get("pin")
-        value = data.get("value", 90)
-        trang_thai = data.get("isOn", False)
-        
-        # TRƯỜNG HỢP 1: ĐIỀU KHIỂN SERVO (LOCK)
-        if pin_name == "servo":
-            if trang_thai:
-                quay_servo(value)      # Mở cửa
-                servo_is_open = True
-                open_start_time = time.ticks_ms() # 5s
+        pn = data.get("pin")
+        val = data.get("value", 0)
+        stat = data.get("isOn", False)
+
+        current_status = "error"
+        if pn == "servo":
+            duty = int(((val if stat else 0) / 180) * 102 + 26)
+            servo_p12.duty(duty)
+            if stat:
+                display.show(Image.ARROW_N)
+                servo_is_open, open_start_time = True, time.ticks_ms()
             else:
-                quay_servo(0)          # Đóng cửa ngay lập tức
+                display.show(Image.ARROW_S)
                 servo_is_open = False
-            
-            print(f"Lệnh Servo: {trang_thai}, Góc: {value}")
-            
-        # TRƯỜNG HỢP 2: ĐIỀU KHIỂN CÁC CHÂN P0, P1, P2 (Đèn/Quạt)
-        elif pin_name in PIN_MAP:
-            target_pin = PIN_MAP[pin_name]
-            if not trang_thai: 
-                target_pin.write_analog(0)
-            else:
-                pwm_levels = {1: 400, 2: 700, 3: 1023}
-                power = pwm_levels.get(value, 1023) 
-                target_pin.write_analog(power)
-            print(f"Đã điều khiển {pin_name} -> {'ON' if trang_thai else 'OFF'}")
+            current_status = "success"
 
-            # 2. Gửi phản hồi lại Server sau khi thực hiện xong
-        feedback = {
-            "pin": pin_name,
-            "isOn": trang_thai,
-            "value": value,
-            "status": "success"
+        elif pn in PIN_MAP:
+            target = PIN_MAP[pn]
+            # Tính mức độ PWM (Quạt 1,2,3 hoặc Đèn 0/1023)
+            power = {1: 400, 2: 700, 3: 1023}.get(val, val) if stat else 0
+            target.write_analog(power)
+            current_status = "success"
+            display.show(Image.YES)
+
+        if current_status == "error":
+            display.show(Image.NO)
+
+        state_msg = {
+            "pin": pn,
+            "isOn": stat,
+            "value": val,
+            "status": current_status
         }
-        client.publish(TOPIC_STATE, json.dumps(feedback))
-        
-    except Exception as e: 
-        print("Lỗi xử lý JSON hoặc Điều khiển:", e)
 
-def get_announce_payload():
-    data = {
-        "name": "Yolobit_{}".format(HARDWARE_ID),
-        "pins": ["temp", "humi", "servo", "P0", "P1", "P2"] 
-    }
-    return json.dumps(data)
-
-def ensure_connectivity():
-    global mqtt_connected, last_reconnect_attempt
-    curr_time = time.ticks_ms()
-
-    # Nếu WiFi mất, thử kết nối lại
-    if not wlan.isconnected():
-        mqtt_connected = False
-        if time.ticks_diff(curr_time, last_reconnect_attempt) > 5000:
-            print("Đang thử kết nối lại WiFi...")
-            wlan.connect(WIFI_SSID, WIFI_PASS)
-            last_reconnect_attempt = curr_time
-        return False
-
-    # Nếu WiFi OK nhưng MQTT chưa kết nối
-    if not mqtt_connected:
-        if time.ticks_diff(curr_time, last_reconnect_attempt) > 5000:
-            try:
-                print("🔌 Đang thử kết nối lại MQTT Broker...")
-                # Đóng socket cũ
-                try:
-                    client.sock.close()
-                except: pass 
-                
-                client.connect()
-                client.sock.settimeout(0.5)
-                client.subscribe(TOPIC_COMMAND)
-                client.publish(TOPIC_ANNOUNCE, get_announce_payload())
-                mqtt_connected = True
-                print("Đã kết nối lại Server!")
-            except Exception as e:
-                print("Lỗi kết nối Broker, sẽ thử lại. Chi tiết:", e)
-                mqtt_connected = False
-            last_reconnect_attempt = curr_time
+        last_display_time = time.ticks_ms()
+        client.publish(TOPIC_STA, json.dumps(state_msg))
     
-    return mqtt_connected
+    except Exception as e:
+        display.show(Image.SAD)
+        last_display_time = time.ticks_ms()
+        print("Lỗi:", e)
 
-# --- 3. CHƯƠNG TRÌNH CHÍNH ---
-last_sensor_send = 0
-last_sensor_read = 0
-temp, humi = 0, 0
+# --- 5. KẾT NỐI MẠNG ---
+wlan = network.WLAN(network.STA_IF)
 
-print("Hệ thống đang khởi động...")
+if HAS_MQTT_LIB:
+    client = MQTTClient(ID, MQTT_BROKER)
+    client.set_callback(sub_cb)
+    client.DEBUG = True
 
+def safe_wifi_connect():
+    print(f"--- Đang thử kết nối WiFi: {WIFI_SSID} ---")
+    try:
+        wlan.active(False)
+        time.sleep_ms(500)
+        wlan.active(True)
+        wlan.connect(WIFI_SSID, WIFI_PASS)
+    except Exception as e:
+        print("Lỗi khởi động WiFi:", e)
+
+safe_wifi_connect()
+
+# --- 6. VÒNG LẶP CHÍNH ---
 while True:
     now = time.ticks_ms()
 
-    if servo_is_open:
-        if time.ticks_diff(now, open_start_time) > 5000:
-            print("Hết 5 giây, tự động khoá cửa...")
-            quay_servo(0)
-            servo_is_open = False
-    
-    # 1. Đọc cảm biến mỗi 2 giây
-    if time.ticks_diff(now, last_sensor_read) > 2000:
-        temp, humi = dht.read()
-        last_sensor_read = now
+    if time.ticks_diff(now, last_display_time) > 2000:
+        display.show(Image.HEART)
 
-    # 2. Kiểm tra và tự động kết nối lại
-    is_ready = ensure_connectivity()
+    # Tự động đóng khoá sau 5s
+    if servo_is_open and time.ticks_diff(now, open_start_time) > 8000:
+        servo_p12.duty(int((0 / 180) * 102 + 26))
+        servo_is_open = False
+        display.show(Image.ARROW_S) 
+        last_display_time = now
 
-    if is_ready:
+    # 7. ĐIỀU KHIỂN TẠI CHỖ (Nút bấm A/B)
+    if button_a.was_pressed():
+        servo_p12.duty(int((90 / 180) * 102 + 26)) # Mở khoá
+        servo_is_open, open_start_time = True, time.ticks_ms()
+        display.show(Image.ARROW_N)
+        last_display_time = now
+        if wlan.isconnected() and mqtt_setup_done:
+            msg = {"pin": "servo", "isOn": True, "value": 90, "status": "success"}
+            client.publish(TOPIC_STA, json.dumps(msg))
+
+    if button_b.was_pressed():
+        servo_p12.duty(int((0 / 180) * 102 + 26)) # Đóng khoá
+        servo_is_open = False
+        display.show(Image.ARROW_S)
+        last_display_time = now
+        if wlan.isconnected() and mqtt_setup_done:
+            msg = {"pin": "servo", "isOn": False, "value": 0, "status": "success"}
+            client.publish(TOPIC_STA, json.dumps(msg))
+
+    # QUẢN LÝ KẾT NỐI
+    if not wlan.isconnected():
+        mqtt_setup_done = False
+        if wlan.status() != network.STAT_CONNECTING:
+            if time.ticks_diff(now, last_wifi_attempt) > 5000:
+                safe_wifi_connect()
+                last_wifi_attempt = now
+    else:
         try:
-            # 3. Kiểm tra lệnh từ Server
-            client.check_msg()
+            if HAS_MQTT_LIB:
+                if not mqtt_setup_done:
+                    client.connect()
+                    client.subscribe(TOPIC_COM)
+                    
+                    # --- JSON ANNOUNCE ---
+                    announce_data = {
+                        "name": f"Yolobit_{ID}",
+                        "pins": ["temp", "humi", "servo", "P0", "P1", "P2"]
+                    }
+                    client.publish(TOPIC_ANNOUNCE, json.dumps(announce_data))
+                    
+                    mqtt_setup_done = True
+                    print("Đã online MQTT & Gửi Announce")
 
-            # 4. Gửi dữ liệu định kỳ mỗi 10 giây
-            if time.ticks_diff(now, last_sensor_send) > 10000:
+                try:
+                    client.check_msg()
+                except Exception as e:
+                    print("Mất kết nối MQTT:", e)
+                    mqtt_setup_done = False
 
-                if temp is not None and humi is not None:
-                    payload = json.dumps({"temp": temp, "humi": humi})
-                    client.publish(TOPIC_SENSOR, payload)
-                    print("Gửi dữ liệu:", payload)
-                else:
-                    print("Bỏ qua lượt gửi do lỗi cảm biến")
-                
-                last_sensor_send = now
+                # Gửi dữ liệu cảm biến mỗi 10 giây
+                if time.ticks_diff(now, last_sensor_send) > 10000:
+                    if dht_sensor:
+                        try:
+                            dht_sensor.read()
+                            p = json.dumps({"temp": dht_sensor.temp(), "humi": dht_sensor.humi()})
+                            client.publish(TOPIC_SEN, p)
+                            print(f"Gửi Sensor: {dht_sensor.temp()}C")
+                        except: print("Lỗi đọc cảm biến")
+                    last_sensor_send = now
+
         except Exception as e:
-            print("Mất kết nối MQTT trong khi chạy:", e)
-            mqtt_connected = False 
+            print("Đợi Broker...")
+            mqtt_setup_done = False
+            time.sleep(1)
 
     time.sleep_ms(200)

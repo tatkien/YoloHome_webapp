@@ -10,6 +10,21 @@ from app.service.history import add_history_record
 
 class DeviceHandler:
     @staticmethod
+    def guess_device_type(pin_name: str) -> str:
+        """
+        Hàm nhận diện loại thiết bị theo tên chân (pin)
+        """
+        name = pin_name.lower()
+        
+        if "temp" in name:
+            return "temp_sensor"
+        if "humi" in name:
+            return "humidity_sensor"
+        if "servo" in name:
+            return "lock" 
+        return "unknown"
+    
+    @staticmethod
     async def process_announce(hardware_id: str, payload: dict):
         """Xử lý khi mạch báo danh"""
         data = MqttAnnounceSchema(**payload)
@@ -32,8 +47,7 @@ class DeviceHandler:
     @staticmethod
     async def process_state(hardware_id: str, payload: dict):
         """Xử lý phản hồi trạng thái (Dành cho Servo, Đèn, Quạt)"""
-        data = MqttStateSchema(**payload)
-        
+        data = MqttStateSchema(**payload) 
         async with AsyncSessionLocal() as session:
             session: AsyncSession
 
@@ -43,6 +57,7 @@ class DeviceHandler:
                 device = res.scalar_one_or_none()
                 
                 if device:
+                    # Thiết bị đã có trong DB
                     if device.isOn != data.isOn or device.value != data.value:
                         device.isOn = data.isOn
                         device.value = data.value
@@ -53,31 +68,36 @@ class DeviceHandler:
                         await session.commit()
                         print(f"[Handler] Đã đồng bộ thiết bị {data.pin} của mạch {hardware_id}")
 
-                        # WEBSOCKET KHI ĐÃ CẬP NHẬT DB THÀNH CÔNG
+                        # WEBSOCKET KHI ĐÃ CẬP NHẬT DB
                         await realtime_manager.broadcast_device_state(device.id, {
                             "isOn": device.isOn,
                             "value": device.value
                         })
                 else:
-                    new_device_id = str(uuid.uuid4())
-                    new_device = Device(
-                        id=new_device_id,
-                        name=f"Thiết bị mới ({data.pin})", 
-                        type="unknown",
-                        hardwareId=hardware_id,
-                        pin=data.pin,
-                        isOn=data.isOn,
-                        value=data.value
-                    )
-                    session.add(new_device)            
-                    await session.commit()
-                    print(f"[Handler] Đã tự động phát hiện và thêm thiết bị mới ở chân {data.pin}")
-                    
-                    # WEBSOCKET CHO THIẾT BỊ MỚI
-                    await realtime_manager.broadcast_device_state(new_device_id, {
-                        "isOn": data.isOn,
-                        "value": data.value
-                    })
+                    # Tự khởi tạo servo
+                    if "servo" in data.pin.lower():
+                        new_id = str(uuid.uuid4())
+                        new_device = Device(
+                            id=new_id,
+                            name="Auto Lock",
+                            type="lock",
+                            hardwareId=hardware_id,
+                            pin=data.pin,
+                            isOn=data.isOn,
+                            value=data.value
+                        )
+                        session.add(new_device)
+                        await session.commit()
+                        print(f"[Handler] Đã tự động thêm khoá cửa ở chân {data.pin}")
+
+                        # WEBSOCKET KHI ĐÃ CẬP NHẬT DB
+                        await realtime_manager.broadcast_device_state(new_id, {
+                            "isOn": data.isOn,
+                            "value": data.value
+                        })
+
+                    else:
+                        print(f"[Handler] Cảnh báo: Chân {data.pin} đang hoạt động nhưng chưa cấu hình")
 
             except Exception as e:
                 await session.rollback()
@@ -91,7 +111,7 @@ class DeviceHandler:
             session: AsyncSession
 
             try:
-                is_changed = False # Kiểm tra xem có thay đổi nào không
+                is_changed = False
                 
                 for pin_name, val in payload.items():
                     stmt = select(Device).where(Device.hardwareId == hardware_id, Device.pin == pin_name)
@@ -106,12 +126,12 @@ class DeviceHandler:
                     else:
                         new_device_id = str(uuid.uuid4())
                         new_device = Device(
-                            id=new_device_id,
-                            name=f"Cảm biến ({pin_name})", 
-                            type="temp_sensor" if "temp" in pin_name.lower() else "humidity_sensor", 
-                            hardwareId=hardware_id,
-                            pin=pin_name,
-                            value=val
+                            id = new_device_id,
+                            name = f"Cảm biến ({pin_name})", 
+                            type = DeviceHandler.guess_device_type(pin_name),
+                            hardwareId = hardware_id,
+                            pin = pin_name,
+                            value = val
                         )
                         session.add(new_device)
                         is_changed = True

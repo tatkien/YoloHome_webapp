@@ -8,6 +8,6 @@ class HardwareNodeBase(BaseModel):
     pins: List[str] # ["temp", "humi", "servo", "P0", "P1", "P2"]
 
 class HardwareNodeRead(HardwareNodeBase):
-    devices: List[DeviceRead] = [] # Lấy danh sách thiết bị con nhờ 'relationship'
+    devices: List[DeviceRead] = []
     
     model_config = ConfigDict(from_attributes=True)
