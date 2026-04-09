@@ -25,7 +25,6 @@ class FaceRecognitionLogRead(BaseModel):
     id: int
     device_id: str | None = None
     image_path: str | None = None
-    feature_vector: list[float] | None = None
     matched_enrollment_id: int | None = None
     matched_user_id: int | None = None
     matched_user_name: str | None = None
@@ -47,4 +46,5 @@ class FaceRecognizeResult(BaseModel):
     matched_user_name: str | None = None
     bbox: list[float] | None = None             # [x1, y1, x2, y2]
     detection_score: float | None = None
+    anti_spoof_score: float | None = None
 
