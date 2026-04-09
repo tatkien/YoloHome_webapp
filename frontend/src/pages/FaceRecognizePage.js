@@ -33,6 +33,13 @@ export default function FaceRecognizePage() {
   const canvasRef = useRef(null);
   const imgRef = useRef(null);
 
+  const statusText = (result?.status || '').toLowerCase();
+  const isRecognized = statusText === 'recognized';
+  const isSpoof = statusText.includes('spoof');
+  const resultStatusClass = isRecognized ? 'recognized' : (isSpoof ? 'spoof' : 'unknown');
+  const resultBadgeClass = isRecognized ? 'badge-recognized' : (isSpoof ? 'badge-spoof' : 'badge-unknown');
+  const resultBadgeText = isRecognized ? '✓ Recognized' : (isSpoof ? '⚠ Spoof' : '? Unknown');
+
   // Draw image + optional bbox overlay on canvas
   const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
@@ -368,18 +375,26 @@ export default function FaceRecognizePage() {
 
           {/* Result */}
           {result && (
-            <div className={`result-card ${result.status}`}>
+            <div className={`result-card ${resultStatusClass}`}>
               <div className="d-flex justify-content-between align-items-center mb-3">
                 <h5 style={{ fontWeight: 700, margin: 0 }}>Recognition Result</h5>
-                <span className={result.status === 'recognized' ? 'badge-recognized' : 'badge-unknown'}>
-                  {result.status === 'recognized' ? '✓ Recognized' : '? Unknown'}
+                <span className={resultBadgeClass}>
+                  {resultBadgeText}
                 </span>
               </div>
 
               <Row className="g-3">
                 <Col xs={6}>
                   <div className="stat-label">Status</div>
-                  <div style={{ fontWeight: 600, fontSize: '1.1rem', color: result.status === 'recognized' ? 'var(--accent-green)' : 'var(--accent-yellow)' }}>
+                  <div
+                    style={{
+                      fontWeight: 600,
+                      fontSize: '1.1rem',
+                      color: isRecognized
+                        ? 'var(--accent-green)'
+                        : (isSpoof ? 'var(--accent-red)' : 'var(--accent-yellow)'),
+                    }}
+                  >
                     {result.status.toUpperCase()}
                   </div>
                 </Col>
@@ -422,6 +437,15 @@ export default function FaceRecognizePage() {
                   <Col xs={6}>
                     <div className="stat-label">Detection Score</div>
                     <div style={{ fontWeight: 600 }}>{result.detection_score}</div>
+                  </Col>
+                )}
+
+                {isSpoof && result.anti_spoof_score != null && (
+                  <Col xs={6}>
+                    <div className="stat-label">Anti-Spoof Score</div>
+                    <div style={{ fontWeight: 700, color: 'var(--accent-red)' }}>
+                      {(result.anti_spoof_score * 100).toFixed(2)}%
+                    </div>
                   </Col>
                 )}
 
