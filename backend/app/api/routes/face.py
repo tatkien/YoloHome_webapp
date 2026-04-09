@@ -1,4 +1,5 @@
 import logging
+import mimetypes
 import os
 import uuid
 from datetime import datetime, timezone
@@ -7,6 +8,7 @@ import cv2
 import numpy as np
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_admin_user, get_current_user
@@ -59,6 +61,11 @@ def _vector_to_list(vector: list[float] | tuple[float, ...] | np.ndarray | None)
     if vector is None:
         return None
     return [float(v) for v in vector]
+
+
+def _image_media_type(path: str) -> str:
+    guessed_type, _ = mimetypes.guess_type(path)
+    return guessed_type or "application/octet-stream"
 
 
 async def _get_user_or_404(db: AsyncSession, user_id: int) -> User:
@@ -182,7 +189,7 @@ async def delete_enrollment(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Enrollment not found")
     await db.delete(enrollment)
     await db.commit()
-    await reset_sequence_to_min_gap(db, "face_enrollments", "face_enrollments_id_seq")
+    # await reset_sequence_to_min_gap(db, "face_enrollments", "face_enrollments_id_seq")
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +337,60 @@ async def recognize_face(
             )
         )
     match_query = match_query.order_by(cosine_dist_col).limit(1)
+    # Debug: print query plan to terminal to see if HNSW ANN index is used.
+    # Use explicit SQL + CAST(:embedding AS vector) to avoid asyncpg '$1' explain binding issues.
+    if settings.DEBUG:
+        try:
+            # Isolate debug SQL in a savepoint so failures do not poison the request transaction.
+            async with db.begin_nested():
+                embedding_text = "[" + ",".join(f"{float(v):.8f}" for v in embedding_list) + "]"
+                if device_id is None:
+                    explain_sql = sa.text(
+                        """
+                        EXPLAIN (ANALYZE, BUFFERS)
+                        SELECT
+                            fe.id,
+                            fe.user_id,
+                            u.username,
+                            u.full_name,
+                            fe.feature_vector <=> CAST(:embedding AS vector) AS distance
+                        FROM face_enrollments fe
+                        LEFT JOIN users u ON fe.user_id = u.id
+                        ORDER BY fe.feature_vector <=> CAST(:embedding AS vector)
+                        LIMIT 1
+                        """
+                    )
+                    plan_rows = await db.execute(explain_sql, {"embedding": embedding_text})
+                else:
+                    explain_sql = sa.text(
+                        """
+                        EXPLAIN (ANALYZE, BUFFERS)
+                        SELECT
+                            fe.id,
+                            fe.user_id,
+                            u.username,
+                            u.full_name,
+                            fe.feature_vector <=> CAST(:embedding AS vector) AS distance
+                        FROM face_enrollments fe
+                        LEFT JOIN users u ON fe.user_id = u.id
+                        WHERE (fe.device_id = :device_id OR fe.device_id IS NULL)
+                        ORDER BY fe.feature_vector <=> CAST(:embedding AS vector)
+                        LIMIT 1
+                        """
+                    )
+                    plan_rows = await db.execute(
+                        explain_sql,
+                        {"embedding": embedding_text, "device_id": device_id},
+                    )
+                plan_lines = [row[0] for row in plan_rows.fetchall()]
 
+            ann_used = any("face_enrollments_vector_hnsw" in line.lower() for line in plan_lines)
+            print("Face recognize query plan: ANN(HNSW) used = %s", ann_used)
+            for line in plan_lines:
+                print("[VECTOR PLAN] %s", line)
+        except Exception:
+            logger.exception("Failed to EXPLAIN face vector match query")
+            
     match_result = await db.execute(match_query)
     best_match = match_result.first()
 
@@ -403,3 +463,25 @@ async def list_recognition_logs(
             )
         )
     return logs
+
+
+@router.get("/logs/{log_id}/image", summary="Return the stored image for a recognition log")
+async def get_recognition_log_image(
+    log_id: int,
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        sa.select(FaceRecognitionLog.image_path).where(FaceRecognitionLog.id == log_id)
+    )
+    image_path = result.scalar_one_or_none()
+    if image_path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recognition log not found")
+    if not os.path.isfile(image_path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recognition log image not found")
+
+    return FileResponse(
+        path=image_path,
+        media_type=_image_media_type(image_path),
+        filename=os.path.basename(image_path),
+    )

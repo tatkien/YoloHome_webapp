@@ -9,7 +9,7 @@ class FaceRecognitionLog(Base):
     id = sa.Column(sa.Integer, primary_key=True, index=True)
     # Camera device that submitted the image
     device_id = sa.Column(
-        sa.String, sa.ForeignKey("devices.id", ondelete="SET NULL"), nullable=True, index=True
+        sa.Integer, sa.ForeignKey("devices.id", ondelete="SET NULL"), nullable=True, index=True
     )
     # Path to the saved image file on disk
     image_path = sa.Column(sa.String(512), nullable=True)
