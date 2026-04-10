@@ -4,69 +4,35 @@ from fastapi import WebSocket
 
 class ConnectionManager:
     def __init__(self):
-        self.hardware_connections: dict[str, list[WebSocket]] = defaultdict(list)
-        self.device_connections: dict[str, list[WebSocket]] = defaultdict(list)
+        self.active_connections: dict[int, list[WebSocket]] = defaultdict(list)
 
     # ==========================================
-    # QUẢN LÝ KẾT NỐI (Lúc Web/App mở lên)
+    # QUẢN LÝ KẾT NỐI
     # ==========================================
-    async def connect_hardware(self, hardware_id: str, websocket: WebSocket) -> None:
-        """Đăng ký nghe toàn bộ cảm biến của 1 bo mạch YoloBit cụ thể"""
+    async def connect_user(self, user_id: int, websocket: WebSocket) -> None:
+        """Đăng ký kết nối chung cho một User"""
         await websocket.accept()
-        if websocket not in self.hardware_connections[hardware_id]:
-            self.hardware_connections[hardware_id].append(websocket)
+        if websocket not in self.active_connections[user_id]:
+            self.active_connections[user_id].append(websocket)
 
-    async def connect_device(self, device_id: str, websocket: WebSocket) -> None:
-        """Đăng ký nghe trạng thái (Bật/Tắt/Success) của riêng 1 con Quạt/Servo/Đèn"""
-        await websocket.accept()
-        if websocket not in self.device_connections[device_id]:
-            self.device_connections[device_id].append(websocket)
-
-    def disconnect_hardware(self, hardware_id: str, websocket: WebSocket) -> None:
-        connections = self.hardware_connections.get(hardware_id)
+    def disconnect_user(self, user_id: int, websocket: WebSocket) -> None:
+        """Ngắt kết nối và dọn dẹp bộ nhớ"""
+        connections = self.active_connections.get(user_id)
         if connections and websocket in connections:
             connections.remove(websocket) 
-    
+        
+        # Nếu user đóng hết các tab/app, xóa luôn key khỏi dict
         if connections is not None and not connections:
-            self.hardware_connections.pop(hardware_id, None)
-
-    def disconnect_device(self, device_id: str, websocket: WebSocket) -> None:
-        connections = self.device_connections.get(device_id)
-        if connections and websocket in connections:
-            connections.remove(websocket)       
-
-        if connections is not None and not connections:
-            self.device_connections.pop(device_id, None)
+            self.active_connections.pop(user_id, None)
 
     # ==========================================
-    # GỬI DỮ LIỆU LÊN WEB (BROADCAST)
+    # GỬI DỮ LIỆU
     # ==========================================
-
-    async def broadcast_sensor_data(self, hardware_id: str, payload: dict) -> None:
+    async def send_to_user(self, user_id: int, payload: dict) -> None:
         """
-        Dùng khi mạch gửi: {"temp": 30, "humi": 70}
+        Gửi dữ liệu tới toàn bộ thiết bị đang online của User này.
         """
-        message = {
-            "event": "sensor_update",
-            "hardware_id": hardware_id,
-            "data": payload
-        }
-        await self._broadcast(self.hardware_connections.get(hardware_id, []), message)
-
-    async def broadcast_device_state(self, device_id: str, payload: dict) -> None:
-        """
-        Dùng khi mạch phản hồi: {"pin": "servo", "isOn": True, "value": 90, "status": "success"}
-        """
-        message = {
-            "event": "device_state_update",
-            "device_id": device_id,
-            "data": payload
-        }
-        await self._broadcast(self.device_connections.get(device_id, []), message)
-
-
-    async def _broadcast(self, connections: list[WebSocket], payload: dict) -> None:
-        """Dùng chung"""
+        connections = self.active_connections.get(user_id, [])
         if not connections:
             return
 
@@ -74,17 +40,20 @@ class ConnectionManager:
         targets = list(connections)
         tasks = [ws.send_json(payload) for ws in targets]
         
-        # 2. Chạy tất cả cùng lúc. return_exceptions=True nếu có một vài kết nối bị sập.
+        # 2. Chạy tất cả cùng lúc
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # 3. Kiểm tra kết quả và dọn dẹp kết nối lỗi
+        # 3. Kiểm tra kết quả và tự động dọn dẹp các kết nối bị sập 
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                # Nếu kết quả là một Exception, nghĩa là WebSocket đó đã chết
                 ws_failed = targets[i]
-                if ws_failed in connections:
-                    connections.remove(ws_failed)
-                    print(f"DEBUG: Removed stale connection due to: {result}")
+                if ws_failed in self.active_connections[user_id]:
+                    self.active_connections[user_id].remove(ws_failed)
+                print(f"DEBUG: Removed stale WS for user {user_id} due to: {result}")
+        
+        # Check lại
+        if not self.active_connections[user_id]:
+            self.active_connections.pop(user_id, None)
 
-
+# Khởi tạo instance dùng chung cho toàn bộ web
 realtime_manager = ConnectionManager()

@@ -6,6 +6,7 @@ class HardwareNodeBase(BaseModel):
     id: str # Chip ID từ mạch gửi lên
     name: str
     pins: List[str] # ["temp", "humi", "servo", "P0", "P1", "P2"]
+    owner_id: Optional[int] = None
 
 class HardwareNodeRead(HardwareNodeBase):
     devices: List[DeviceRead] = []

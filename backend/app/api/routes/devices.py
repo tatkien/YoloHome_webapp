@@ -9,13 +9,14 @@ from app.api.deps import get_current_user, get_admin_user, get_db
 from app.models.device import Device
 from app.models.user import User
 
-from app.schemas.device import DeviceRead, DeviceUpdate, DeviceCreate
+from app.schemas.device import DeviceRead, DeviceUpdate, DeviceCreate, DeviceLogRead
 from app.schemas.schedule import DeviceScheduleCreate, DeviceScheduleRead
-from app.models.device import HardwareNode
+from app.models.device import HardwareNode, DeviceLog
 from app.schemas.hardware import HardwareNodeRead
 # from app.main import mqtt_service 
 from app.realtime.websocket_manager import realtime_manager
 from app.service.history import add_history_record
+from app.core.device_handle import DeviceHandler
 
 router = APIRouter(prefix="/devices", tags=["devices"])
 
@@ -127,8 +128,18 @@ async def update_device(
     await db.refresh(device)
     
     # Broadcast cập nhật UI
-    await realtime_manager.broadcast_device_state(device_id, {"event": "info_updated", "name": device.name,
-    "room": device.room,})
+    user_ids = await DeviceHandler._get_authorized_users(db, device.id, device.hardwareId)
+    if user_ids:
+        ws_payload = {
+            "event": "info_updated",
+            "device_id": device.id,
+            "data": {
+                "name": device.name,
+                "room": device.room
+            }
+        }
+        for uid in user_ids:
+            await realtime_manager.send_to_user(uid, ws_payload)
 
     # Thêm log lịch sử
     await add_history_record(
@@ -230,11 +241,27 @@ async def create_schedule(
         device_id=device_id, 
         action=payload.action,
         time_of_day=payload.time_of_day.replace(second=0, microsecond=0),
-        created_by_id=str(user.id) # Ghi nhận ID của người đặt lịch
+        created_by_id=user.id
     )
     db.add(schedule)
     await db.commit()
     return schedule
+
+@router.get("/{device_id}/history", response_model=List[DeviceLogRead])
+async def get_device_history(
+    device_id: str, 
+    db: AsyncSession = Depends(get_db), 
+    user: User = Depends(get_current_user),
+    limit: int = 20
+):
+    """Lấy danh sách log lịch sử của một thiết bị cụ thể."""
+    # Ensure device exists
+    await _get_device_or_404(db, device_id)
+    
+    # Query logs ordered by newest first
+    stmt = sa.select(DeviceLog).where(DeviceLog.device_id == device_id).order_by(DeviceLog.created_at.desc()).limit(limit)
+    result = await db.execute(stmt)
+    return result.scalars().all()
 
 @router.get("/docs-websocket-info", tags=["Tài liệu WebSocket (Chỉ tra cứu)"])
 async def websocket_documentation_only():
@@ -242,29 +269,23 @@ async def websocket_documentation_only():
     ### LƯU Ý: ĐÂY LÀ API GIẢ (DÙNG ĐỂ TRA CỨU TÀI LIỆU)
     **không bấm "Execute" vì API này không trả về dữ liệu thực.**
     
-    Hệ thống sử dụng WebSocket để cập nhật dữ liệu thời gian thực (Real-time). Dưới đây là hướng dẫn kết nối:
+    Hệ thống sử dụng 1 Ống Chung cho mỗi User. Dưới đây là hướng dẫn kết nối:
 
     ---
-    ### 1. Link theo dõi dữ liệu cảm biến
-    Dùng để nhận dữ liệu từ một mạch.
-    * **URL:** `ws://{{host}}/api/v1/ws/hardware/{hardware_id}?token={{your_jwt_token}}`
-    * **Tham số:** * `hardware_id`: ID của mạch (VD: `MOCK_BOARD`)
-        * `token`: Truyền JWT Token trực tiếp vào URL sau dấu `?`
+    ### 1. Mở kết nối
+    Dữ liệu của các thiết bị/cảm biến sẽ đổ về chung một đường link này.
+    * **URL:** `ws://{{host}}/api/v1/ws?token={{your_jwt_token}}`
     
     ---
-    ### 2. Link theo dõi trạng thái thiết bị lẻ
-    Dùng để nhận dữ liệu từ 1 thiết bị.
-    * **URL:** `ws://{{host}}/api/v1/ws/devices/{device_id}?token={{your_jwt_token}}`
-    * **Tham số:** * `device_id`: UUID của thiết bị trong Database.
+    ### 2. Giao thức tin nhắn (JSON)
+    * **Server -> Client (Bắt tay thành công):** `{"type": "connection.ready", "user_id": 1}`
+    * **Client -> Server (Giữ mạng):** Gửi text: `{"type": "ping"}` định kỳ để nhận lại `{"type": "pong"}`.
 
     ---
-    ### 3. Giao thức tin nhắn (JSON)
-    Khi đã kết nối thành công, Server và Client sẽ nói chuyện qua định dạng JSON:
+    ### 3. Cấu trúc dữ liệu nhận được
+    Frontend dựa vào trường `"event"` để vẽ lại giao diện.
 
-    * **Server -> Client (Lúc mới nối):** `{"type": "subscription.ready", "id": "..."}`
-    * **Client -> Server (Giữ mạng):** Gửi text: `"ping"` (định kỳ) để nhận lại `{"type": "pong"}`.
-
-    **Khi có cập nhật cảm biến (Hardware Stream):**
+    **Sự kiện Cập nhật Cảm biến:**
     ```json
     {
       "event": "sensor_update",
@@ -272,12 +293,13 @@ async def websocket_documentation_only():
       "data": { "temp": 28, "humi": 70 }
     }
     ```
-    **Khi có thay đổi trạng thái thiết bị (Device Stream):**
+    **Sự kiện Cập nhật Trạng thái (Bật/Tắt):**
     ```json
     {
-      "event": "device_state_update",
+      "event": "device_update",
+      "hardware_id": "MOCK_BOARD",
       "device_id": "uuid-cua-thiet-bi",
-      "data": { "value": 2, "isOn": true, "status": "success" }
+      "data": { "isOn": true, "value": 1023 }
     }
     ```
     """
