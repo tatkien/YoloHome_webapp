@@ -16,7 +16,7 @@ class MqttCommandSchema(BaseModel):
     pin: str
     isOn: bool 
     # Value đèn nếu ko có mặc định max. Quạt mức 1,2,3. Servo theo góc, nếu ko có mặc định xoay 90o.
-    value: int = Field(..., ge=0, le=180) # Chặn giá trị ngoài 0-180
+    value: int = Field(0, ge=0, le=1023)
 
 # Quy tắc phản hồi lệnh điều khiển (State)
 class MqttStateSchema(BaseModel):

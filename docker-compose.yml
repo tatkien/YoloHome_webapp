@@ -3,6 +3,7 @@ services:
     image: pgvector/pgvector:pg17
     restart: unless-stopped
     environment:
+      TZ: Asia/Ho_Chi_Minh
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ntk06082005
       POSTGRES_DB: yolohome
@@ -20,6 +21,7 @@ services:
     build: ./backend
     restart: unless-stopped
     environment:
+      TZ: Asia/Ho_Chi_Minh
       DATABASE_URL: postgresql+asyncpg://postgres:ntk06082005@db:5432/yolohome
       MQTT_BROKER_URL: mqtt
       MQTT_PORT: 1883

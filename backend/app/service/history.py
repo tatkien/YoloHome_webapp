@@ -1,3 +1,4 @@
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import AsyncSessionLocal
 from app.models.device import DeviceLog 
 
@@ -5,8 +6,9 @@ async def add_history_record(
     device_id: str, 
     device_name: str, 
     action: str, 
-    actor: str, 
-    source: str
+    actor: str|int, 
+    source: str,
+    db: AsyncSession = None
 ):
     """
     Hàm dùng chung để ghi lại mọi biến động của hệ thống vào bảng DeviceLog.
@@ -22,11 +24,11 @@ async def add_history_record(
                 source=source
             )
             
-            # 2. Thêm vào session và lưu xuống Database
+            # 2. Lưu xuống Database
             session.add(new_log)
             await session.commit()
             
         except Exception as e:
-            # 3. Rollback nếu có lỗi Database để tránh treo hệ thống
+            # 3. Rollback nếu có lỗi Database để tránh treo
             await session.rollback()
             print(f"[History Service] Lỗi khi ghi lịch sử cho thiết bị {device_name}: {e}")

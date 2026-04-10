@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy import select
 from app.db.session import AsyncSessionLocal
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.device import Device, HardwareNode
+from app.models.device import Device, HardwareNode, DeviceShare
 from app.schemas.mqtt import MqttAnnounceSchema, MqttStateSchema
 from app.realtime.websocket_manager import realtime_manager
 from app.service.history import add_history_record
@@ -25,12 +25,33 @@ class DeviceHandler:
         return "unknown"
     
     @staticmethod
+    async def _get_authorized_users(session: AsyncSession, hardware_id: str, device_id: str | None = None) -> list[int]:
+        """Lấy danh sách User được phép nhận thông báo"""
+        authorized_users = set()
+        
+        # 1. Tìm Chủ nhà (qua HardwareNode)
+        stmt_owner = select(HardwareNode.owner_id).where(HardwareNode.id == hardware_id)
+        res_owner = await session.execute(stmt_owner)
+        owner_id = res_owner.scalar_one_or_none()
+        
+        if owner_id:
+            authorized_users.add(owner_id)
+            
+        # 2. Tìm người được chia sẻ thiết bị
+        if device_id:
+            stmt_shared = select(DeviceShare.user_id).where(DeviceShare.device_id == device_id)
+            res_shared = await session.execute(stmt_shared)
+            shared_user_ids = res_shared.scalars().all()
+            authorized_users.update(shared_user_ids)
+            
+        return list(authorized_users)
+    
+    @staticmethod
     async def process_announce(hardware_id: str, payload: dict):
         """Xử lý khi mạch báo danh"""
         data = MqttAnnounceSchema(**payload)
         async with AsyncSessionLocal() as session:
             session: AsyncSession
-
             stmt = select(HardwareNode).where(HardwareNode.id == hardware_id)
             res = await session.execute(stmt)
             node = res.scalar_one_or_none()
@@ -39,6 +60,7 @@ class DeviceHandler:
                 node.name = data.name
                 node.pins = data.pins
             else:
+                # Mạch mới lưu vào DB
                 new_node = HardwareNode(id=hardware_id, name=data.name, pins=data.pins)
                 session.add(new_node)
             await session.commit()
@@ -56,6 +78,8 @@ class DeviceHandler:
                 res = await session.execute(stmt)
                 device = res.scalar_one_or_none()
                 
+                device_id_to_broadcast = None
+                
                 if device:
                     # Thiết bị đã có trong DB
                     if device.isOn != data.isOn or device.value != data.value:
@@ -68,11 +92,7 @@ class DeviceHandler:
                         await session.commit()
                         print(f"[Handler] Đã đồng bộ thiết bị {data.pin} của mạch {hardware_id}")
 
-                        # WEBSOCKET KHI ĐÃ CẬP NHẬT DB
-                        await realtime_manager.broadcast_device_state(device.id, {
-                            "isOn": device.isOn,
-                            "value": device.value
-                        })
+                        device_id_to_broadcast = device.id
                 else:
                     # Tự khởi tạo servo
                     if "servo" in data.pin.lower():
@@ -90,14 +110,27 @@ class DeviceHandler:
                         await session.commit()
                         print(f"[Handler] Đã tự động thêm khoá cửa ở chân {data.pin}")
 
-                        # WEBSOCKET KHI ĐÃ CẬP NHẬT DB
-                        await realtime_manager.broadcast_device_state(new_id, {
-                            "isOn": data.isOn,
-                            "value": data.value
-                        })
+                        device_id_to_broadcast = new_id
 
-                    else:
-                        print(f"[Handler] Cảnh báo: Chân {data.pin} đang hoạt động nhưng chưa cấu hình")
+                # ==========================================
+                # GỬI WEBSOCKET ĐẾN NHỮNG NGƯỜI CÓ QUYỀN
+                # ==========================================
+                if device_id_to_broadcast:
+                    user_ids = await DeviceHandler._get_authorized_users(session, hardware_id, device_id_to_broadcast)
+                    
+                    if user_ids:
+                        ws_payload = {
+                            "event": "device_update",
+                            "device_id": device_id_to_broadcast,
+                            "hardware_id": hardware_id,
+                            "data": {
+                                "isOn": data.isOn,
+                                "value": data.value
+                            }
+                        }
+                        for uid in user_ids:
+                            await realtime_manager.send_to_user(uid, ws_payload)   
+                   
 
             except Exception as e:
                 await session.rollback()
@@ -141,7 +174,20 @@ class DeviceHandler:
                 if is_changed:
                     await session.commit()
                     print(f"[Handler] Đã đồng bộ dữ liệu cảm biến mạch {hardware_id}")
-                    await realtime_manager.broadcast_sensor_data(hardware_id, payload)
+                    # ==========================================
+                    # GỬI WEBSOCKET ĐẾN NHỮNG NGƯỜI CÓ QUYỀN
+                    # ==========================================
+                    # Check owner của bo mạch
+                    user_ids = await DeviceHandler._get_authorized_users(session, hardware_id, device_id=None)
+                    
+                    if user_ids:
+                        ws_payload = {
+                            "event": "sensor_update",
+                            "hardware_id": hardware_id,
+                            "data": payload
+                        }
+                        for uid in user_ids:
+                            await realtime_manager.send_to_user(uid, ws_payload)
                     
             except Exception as e:
                 await session.rollback()

@@ -1,87 +1,60 @@
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, WebSocketException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+import asyncio
 
 from app.core.security import decode_access_token
-from app.db.session import get_db
-from app.models.device import Device, HardwareNode
+from app.db.session import AsyncSessionLocal
 from app.models.user import User
 from app.realtime.websocket_manager import realtime_manager
 
 router = APIRouter(tags=["ws"])
 
-async def _resolve_websocket_user(token: str | None, db: AsyncSession) -> User:
-    """Xác thực người dùng qua Token trước khi cho phép mở WebSocket"""
+async def authenticate_ws_user(token: str) -> User:
     if not token:
-        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Token is required")
-
-    try:
-        payload = decode_access_token(token)
-        result = await db.execute(sa.select(User).where(User.id == int(payload["sub"])))
-        user = result.scalar_one_or_none()
-        if user is None or not user.is_active:
-            raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid authentication token")
-        return user
-    except Exception:
-        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid authentication token")
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Token required")
+    
+    # Tự mở đóng DB context
+    async with AsyncSessionLocal() as db:
+        try:
+            payload = decode_access_token(token)
+            result = await db.execute(sa.select(User).where(User.id == int(payload["sub"])))
+            user = result.scalar_one_or_none()
+            
+            if user is None or not user.is_active:
+                raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
+            return user
+        except Exception:
+            raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
 
 # ==========================================
-# ENDPOINT 1: LẮNG NGHE CẢM BIẾN
+# ENDPOINT CHO USER
 # ==========================================
-@router.websocket("/ws/hardware/{hardware_id}")
-async def hardware_stream(
+@router.websocket("/ws")
+async def user_global_stream(
     websocket: WebSocket,
-    hardware_id: str,
     token: str | None = Query(default=None),
-    db: AsyncSession = Depends(get_db),
 ):
-    await _resolve_websocket_user(token, db)
+    # 1. Xác thực và lấy User
+    user = await authenticate_ws_user(token)
 
-    # 1. Kiểm tra mạch có tồn tại không
-    result = await db.execute(sa.select(HardwareNode).where(HardwareNode.id == hardware_id))
-    if result.scalar_one_or_none() is None:
-        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Hardware not found")
+    # 2. Chấp nhận kết nối và đưa vào Manager
+    await realtime_manager.connect_user(user.id, websocket)
+    await websocket.send_json({"type": "connection.ready", "user_id": user.id})
 
-    # 2. Đăng ký kết nối vào Manager
-    await realtime_manager.connect_hardware(hardware_id, websocket)
-    await websocket.send_json({"type": "subscription.ready", "hardware_id": hardware_id})
-
-    # 3. Giữ kết nối và phản hồi Ping/Pong để tránh rớt mạng
+    # 3. Vòng lặp giữ kết nối
     try:
         while True:
-            message = await websocket.receive_text()
-            if message.lower() == "ping":
-                await websocket.send_json({"type": "pong", "hardware_id": hardware_id})
+            # Nhận tin nhắn từ Client
+            data = await websocket.receive_json()
+            
+            # Xử lý Ping/Pong
+            if data.get("type") == "ping":
+                await websocket.send_json({"type": "pong"})
+                
+            # Gửi lệnh xuống (nếu có)
+            elif data.get("action") == "toggle_device":
+                device_id = data.get("device_id")
+                
     except WebSocketDisconnect:
-        realtime_manager.disconnect_hardware(hardware_id, websocket)
-
-
-# ==========================================
-# ENDPOINT 2: LẮNG NGHE PHẢN HỒI TRẠNG THÁI (Theo Từng Thiết Bị)
-# ==========================================
-@router.websocket("/ws/device/{device_id}")
-async def device_stream(
-    websocket: WebSocket,
-    device_id: str,
-    token: str | None = Query(default=None),
-    db: AsyncSession = Depends(get_db),
-):
-    await _resolve_websocket_user(token, db)
-
-    # 1. Kiểm tra thiết bị có tồn tại không
-    result = await db.execute(sa.select(Device).where(Device.id == device_id))
-    if result.scalar_one_or_none() is None:
-        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Device not found")
-
-    # 2. Đăng ký kết nối vào Manager
-    await realtime_manager.connect_device(device_id, websocket)
-    await websocket.send_json({"type": "subscription.ready", "device_id": device_id})
-
-    # 3. Giữ kết nối
-    try:
-        while True:
-            message = await websocket.receive_text()
-            if message.lower() == "ping":
-                await websocket.send_json({"type": "pong", "device_id": device_id})
-    except WebSocketDisconnect:
-        realtime_manager.disconnect_device(device_id, websocket)
+        realtime_manager.disconnect_user(user.id, websocket)

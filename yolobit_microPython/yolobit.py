@@ -33,7 +33,7 @@ class DHT20:
     def read(self):
         self.i2c.writeto(self.address, b'\xac\x33\x00')
         for _ in range(10):
-            time.sleep_ms(10)
+            time.sleep_ms(30)
             status = self.i2c.readfrom(self.address, 1)[0]
             if (status & 0x80) == 0: break
         
@@ -43,12 +43,12 @@ class DHT20:
         traw = (((data[3] & 0x0F) << 16) | (data[4] << 8) | data[5])
         self._temp = traw * 200 / 1048576 - 50
 
-    def temp(self): return int(round(self._temp, 1))
-    def humi(self): return int(round(self._humi, 1))
+    def temp(self): return round(self._temp, 1)
+    def humi(self): return round(self._humi, 1)
 
 # --- 3. CẤU HÌNH ---
 WIFI_SSID, WIFI_PASS = "G35", "12345678"
-MQTT_BROKER = "10.49.109.71" 
+MQTT_BROKER = "10.23.151.71" 
 
 ID = ubinascii.hexlify(unique_id()).decode()
 TOPIC_ANNOUNCE = f"smart_home/hardware/{ID}/announce"
@@ -58,8 +58,9 @@ TOPIC_STA = f"smart_home/hardware/{ID}/state"
 
 # KHỞI TẠO PHẦN CỨNG
 display.show(Image.HEART)
-i2c = SoftI2C(scl=Pin(19), sda=Pin(20)) 
+i2c = SoftI2C(scl=Pin(22), sda=Pin(21)) 
 servo_p12 = PWM(Pin(pin12.pin), freq=50)
+servo_p12.duty(int((0 / 180) * 102 + 26))
 PIN_MAP = {"P0": pin0, "P1": pin1, "P2": pin2}
 
 dht_sensor = None
@@ -100,7 +101,7 @@ def sub_cb(topic, msg):
         elif pn in PIN_MAP:
             target = PIN_MAP[pn]
             # Tính mức độ PWM (Quạt 1,2,3 hoặc Đèn 0/1023)
-            power = {1: 400, 2: 700, 3: 1023}.get(val, val) if stat else 0
+            power = {1: 450, 2: 700, 3: 1023}.get(val, val) if stat else 0
             target.write_analog(power)
             current_status = "success"
             display.show(Image.YES)
@@ -213,13 +214,10 @@ while True:
                             dht_sensor.read()
                             p = json.dumps({"temp": dht_sensor.temp(), "humi": dht_sensor.humi()})
                             client.publish(TOPIC_SEN, p)
-                            print(f"Gửi Sensor: {dht_sensor.temp()}C")
+                            print(f"Gửi Sensor: {dht_sensor.temp()}°C | Độ ẩm: {dht_sensor.humi()}%")
                         except: print("Lỗi đọc cảm biến")
                     last_sensor_send = now
 
         except Exception as e:
             print("Đợi Broker...")
             mqtt_setup_done = False
-            time.sleep(1)
-
-    time.sleep_ms(200)
