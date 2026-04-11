@@ -20,8 +20,11 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "multidisciplinaryproject"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    SECRET_KEY: str = "multidisciplinaryproject"
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     DEBUG: bool = True
-    CORS_ORIGINS: list[str] = ["http://localhost:3000"]
+    CORS_ORIGINS: str | list[str] = ["http://localhost:3000"]
     SETUP_CODE: str | None = None
 
     # Face recognition model paths (relative to container or absolute)
@@ -33,12 +36,25 @@ class Settings(BaseSettings):
     FACE_MATCH_THRESHOLD: float = 0.4
     FACE_DETECTION_THRESHOLD: float = 0.7
 
+    # --- HARDWARE SETTINGS ---
+    # Auto-close delay for lock servo
+    SERVO_AUTO_CLOSE_DELAY_MS: int = 5000 
+    
+    # Servo angle presets
+    SERVO_OPEN_ANGLE: int = 90
+    SERVO_CLOSE_ANGLE: int = 0
+
+    # --- MQTT CONFIGURATION ---
+    MQTT_BROKER_URL: str = "localhost"
+    MQTT_PORT: int = 1883
+    MQTT_KEEPALIVE: int = 60
+
+
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def parse_cors_origins(cls, value):
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
-
 
 settings = Settings()

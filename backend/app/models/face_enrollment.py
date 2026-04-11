@@ -22,7 +22,7 @@ class FaceEnrollment(Base):
     bbox = sa.Column(sa.JSON, nullable=True)
     # Optionally scope to a specific door-camera device
     device_id = sa.Column(
-        sa.Integer, sa.ForeignKey("devices.id", ondelete="SET NULL"), nullable=True, index=True
+        sa.String(64), sa.ForeignKey("devices.id", ondelete="SET NULL"), nullable=True, index=True
     )
     created_at = sa.Column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
