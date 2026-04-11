@@ -1,5 +1,5 @@
 import sqlalchemy as sa
-from sqlalchemy.orm import relationship # Thêm dòng này
+from sqlalchemy.orm import relationship
 from app.db.session import Base
 
 class DeviceSchedule(Base):

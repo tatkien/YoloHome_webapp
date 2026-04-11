@@ -8,7 +8,7 @@ try:
     HAS_MQTT_LIB = True
 except:
     HAS_MQTT_LIB = False
-    print("Thiếu umqtt.robust")
+    print("Missing umqtt.robust")
 
 # --- 2. CLASS DHT20 ---
 class DHT20:
@@ -46,7 +46,7 @@ class DHT20:
     def temp(self): return round(self._temp, 1)
     def humi(self): return round(self._humi, 1)
 
-# --- 3. CẤU HÌNH ---
+# --- 3. CONFIGURATION ---
 WIFI_SSID, WIFI_PASS = "G35", "12345678"
 MQTT_BROKER = "10.23.151.71" 
 
@@ -56,7 +56,7 @@ TOPIC_SEN = f"smart_home/hardware/{ID}/sensor"
 TOPIC_COM = f"smart_home/hardware/{ID}/command"
 TOPIC_STA = f"smart_home/hardware/{ID}/state"
 
-# KHỞI TẠO PHẦN CỨNG
+# HARDWARE INITIALIZATION
 display.show(Image.HEART)
 i2c = SoftI2C(scl=Pin(22), sda=Pin(21)) 
 servo_p12 = PWM(Pin(pin12.pin), freq=50)
@@ -68,7 +68,7 @@ try:
     dht_sensor = DHT20(i2c)
     print("DHT20: OK")
 except:
-    print("DHT20: Không tìm thấy")
+    print("DHT20: Not found")
 
 servo_is_open = False
 open_start_time = 0
@@ -100,7 +100,7 @@ def sub_cb(topic, msg):
 
         elif pn in PIN_MAP:
             target = PIN_MAP[pn]
-            # Tính mức độ PWM (Quạt 1,2,3 hoặc Đèn 0/1023)
+            # Compute PWM power (Fan levels 1/2/3 or Light 0/1023)
             power = {1: 450, 2: 700, 3: 1023}.get(val, val) if stat else 0
             target.write_analog(power)
             current_status = "success"
@@ -122,9 +122,9 @@ def sub_cb(topic, msg):
     except Exception as e:
         display.show(Image.SAD)
         last_display_time = time.ticks_ms()
-        print("Lỗi:", e)
+        print("Error:", e)
 
-# --- 5. KẾT NỐI MẠNG ---
+    # --- 5. NETWORK CONNECTION ---
 wlan = network.WLAN(network.STA_IF)
 
 if HAS_MQTT_LIB:
@@ -133,34 +133,34 @@ if HAS_MQTT_LIB:
     client.DEBUG = True
 
 def safe_wifi_connect():
-    print(f"--- Đang thử kết nối WiFi: {WIFI_SSID} ---")
+    print(f"--- Trying WiFi connection: {WIFI_SSID} ---")
     try:
         wlan.active(False)
         time.sleep_ms(500)
         wlan.active(True)
         wlan.connect(WIFI_SSID, WIFI_PASS)
     except Exception as e:
-        print("Lỗi khởi động WiFi:", e)
+        print("WiFi startup error:", e)
 
 safe_wifi_connect()
 
-# --- 6. VÒNG LẶP CHÍNH ---
+# --- 6. MAIN LOOP ---
 while True:
     now = time.ticks_ms()
 
     if time.ticks_diff(now, last_display_time) > 2000:
         display.show(Image.HEART)
 
-    # Tự động đóng khoá sau 5s
+    # Auto-close lock after 8s
     if servo_is_open and time.ticks_diff(now, open_start_time) > 8000:
         servo_p12.duty(int((0 / 180) * 102 + 26))
         servo_is_open = False
         display.show(Image.ARROW_S) 
         last_display_time = now
 
-    # 7. ĐIỀU KHIỂN TẠI CHỖ (Nút bấm A/B)
+    # 7. LOCAL CONTROL (A/B buttons)
     if button_a.was_pressed():
-        servo_p12.duty(int((90 / 180) * 102 + 26)) # Mở khoá
+        servo_p12.duty(int((90 / 180) * 102 + 26)) # Open lock
         servo_is_open, open_start_time = True, time.ticks_ms()
         display.show(Image.ARROW_N)
         last_display_time = now
@@ -169,7 +169,7 @@ while True:
             client.publish(TOPIC_STA, json.dumps(msg))
 
     if button_b.was_pressed():
-        servo_p12.duty(int((0 / 180) * 102 + 26)) # Đóng khoá
+        servo_p12.duty(int((0 / 180) * 102 + 26)) # Close lock
         servo_is_open = False
         display.show(Image.ARROW_S)
         last_display_time = now
@@ -177,7 +177,7 @@ while True:
             msg = {"pin": "servo", "isOn": False, "value": 0, "status": "success"}
             client.publish(TOPIC_STA, json.dumps(msg))
 
-    # QUẢN LÝ KẾT NỐI
+    # CONNECTION MANAGEMENT
     if not wlan.isconnected():
         mqtt_setup_done = False
         if wlan.status() != network.STAT_CONNECTING:
@@ -199,25 +199,25 @@ while True:
                     client.publish(TOPIC_ANNOUNCE, json.dumps(announce_data))
                     
                     mqtt_setup_done = True
-                    print("Đã online MQTT & Gửi Announce")
+                    print("MQTT online and announce published")
 
                 try:
                     client.check_msg()
                 except Exception as e:
-                    print("Mất kết nối MQTT:", e)
+                    print("MQTT connection lost:", e)
                     mqtt_setup_done = False
 
-                # Gửi dữ liệu cảm biến mỗi 10 giây
+                # Publish sensor data every 10 seconds
                 if time.ticks_diff(now, last_sensor_send) > 10000:
                     if dht_sensor:
                         try:
                             dht_sensor.read()
                             p = json.dumps({"temp": dht_sensor.temp(), "humi": dht_sensor.humi()})
                             client.publish(TOPIC_SEN, p)
-                            print(f"Gửi Sensor: {dht_sensor.temp()}°C | Độ ẩm: {dht_sensor.humi()}%")
-                        except: print("Lỗi đọc cảm biến")
+                            print(f"Sensor published: {dht_sensor.temp()}°C | Humidity: {dht_sensor.humi()}%")
+                        except: print("Sensor read error")
                     last_sensor_send = now
 
         except Exception as e:
-            print("Đợi Broker...")
+            print("Waiting for broker...")
             mqtt_setup_done = False

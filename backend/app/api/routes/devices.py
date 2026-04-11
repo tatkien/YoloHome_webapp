@@ -12,6 +12,7 @@ from app.models.user import User
 from app.schemas.device import DeviceRead, DeviceUpdate, DeviceCreate, DeviceLogRead
 from app.schemas.schedule import DeviceScheduleCreate, DeviceScheduleRead
 from app.models.device import HardwareNode, DeviceLog
+from app.models.device_schedule import DeviceSchedule
 from app.schemas.hardware import HardwareNodeRead
 # from app.main import mqtt_service 
 from app.realtime.websocket_manager import realtime_manager
@@ -20,25 +21,25 @@ from app.core.device_handle import DeviceHandler
 
 router = APIRouter(prefix="/devices", tags=["devices"])
 
-# --- HÀM HỖ TRỢ ---
+# --- HELPER FUNCTIONS ---
 async def _get_device_or_404(db: AsyncSession, device_id: str) -> Device:
-    """Tìm thiết bị bằng UUID hoặc trả về lỗi 404"""
+    """Find a device by UUID or raise 404."""
     result = await db.execute(sa.select(Device).where(Device.id == device_id))
     device = result.scalar_one_or_none()
     if not device:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Không tìm thấy thiết bị")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Device not found")
     return device
 
 
-# --- PHẦN QUẢN LÝ MẠCH (HARDWARE) ---
+# --- HARDWARE MANAGEMENT ---
 
 @router.get("/hardware", response_model=List[HardwareNodeRead])
 async def list_hardware_nodes(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user)
 ):
-    """Lấy danh sách mạch YoloBit và các chân (pins)"""
-    # Gắn selectinload để Database gói luôn các thiết bị con đi kèm
+    """Get YoloBit boards and their available pins."""
+    # Use selectinload so related child devices are loaded eagerly
     query = sa.select(HardwareNode).options(selectinload(HardwareNode.devices))
     result = await db.execute(query)
     return result.scalars().unique().all() 
@@ -49,13 +50,13 @@ async def read_hardware_node(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user)
 ):
-    """Xem chi tiết 1 bo mạch"""
+    """Get details for one hardware board."""
     query = sa.select(HardwareNode).where(HardwareNode.id == hardware_id).options(selectinload(HardwareNode.devices))
     result = await db.execute(query)
     node = result.scalar_one_or_none()
     
     if not node:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Không tìm thấy bo mạch này")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Hardware board not found")
     return node
 
 @router.delete("/hardware/{hardware_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -64,28 +65,28 @@ async def delete_hardware_node(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(get_admin_user)
 ):
-    """XOÁ mạch và tự động xóa tất cả thiết bị con thuộc về mạch này"""
-    # 1. Tìm mạch
+    """Delete a hardware board and all child devices."""
+    # 1. Find hardware board
     result = await db.execute(sa.select(HardwareNode).where(HardwareNode.id == hardware_id))
     node = result.scalar_one_or_none()
     
     if not node:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Không tìm thấy bo mạch")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Hardware board not found")
 
-    # 2. Xóa bo mạch (xoá các thiết bị con đi kèm)
+    # 2. Delete board (child devices cascade)
     await db.delete(node)
     await db.commit()
 
 
-# --- PHẦN 1: CRUD QUẢN LÝ THIẾT BỊ ---
+# --- PART 1: DEVICE CRUD ---
 
 @router.post("/", response_model=DeviceRead)
 async def create_device(
-    payload: DeviceCreate, # Chứa tên, hardware_id, pin...
+    payload: DeviceCreate, # Includes name, hardware_id, pin...
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(get_admin_user)
 ):
-    """Admin tạo thiết bị mới gắn với pin mạch gửi lên - device_id sinh ra"""
+    """Admin creates a new device mapped to a hardware pin."""
     new_device = Device(**payload.model_dump())
     db.add(new_device)
     await db.commit()
@@ -97,7 +98,7 @@ async def list_devices(
     db: AsyncSession = Depends(get_db), 
     _: User = Depends(get_current_user) 
 ):
-    """Lấy danh sách tất cả thiết bị"""
+    """List all devices."""
     result = await db.execute(sa.select(Device).order_by(Device.createdAt.desc()))
     return result.scalars().all()
 
@@ -107,7 +108,7 @@ async def read_device(
     db: AsyncSession = Depends(get_db), 
     _: User = Depends(get_current_user) 
 ):
-    """Xem chi tiết 1 thiết bị"""
+    """Get one device details."""
     return await _get_device_or_404(db, device_id)
 
 @router.patch("/{device_id}", response_model=DeviceRead)
@@ -117,7 +118,7 @@ async def update_device(
     db: AsyncSession = Depends(get_db), 
     admin: User = Depends(get_admin_user)
 ):
-    """Cập nhật thông tin (Tên, phòng, loại...)"""
+    """Update device info (name, room, type...)."""
     device = await _get_device_or_404(db, device_id)
     
     update_data = payload.model_dump(exclude_unset=True)
@@ -127,7 +128,7 @@ async def update_device(
     await db.commit()
     await db.refresh(device)
     
-    # Broadcast cập nhật UI
+    # Broadcast UI update
     user_ids = await DeviceHandler._get_authorized_users(db, device.id, device.hardwareId)
     if user_ids:
         ws_payload = {
@@ -141,11 +142,11 @@ async def update_device(
         for uid in user_ids:
             await realtime_manager.send_to_user(uid, ws_payload)
 
-    # Thêm log lịch sử
+    # Add history log
     await add_history_record(
         device_id=device.id,
         device_name=device.name,
-        action="Cập nhật thông tin cấu hình thiết bị",
+        action="Updated device configuration info",
         actor=str(admin.id),
         source="Web API (Update)"
     )
@@ -158,26 +159,26 @@ async def delete_device(
     db: AsyncSession = Depends(get_db), 
     admin: User = Depends(get_admin_user)
 ):
-    """Xóa thiết bị"""
+    """Delete a device."""
     device = await _get_device_or_404(db, device_id)
 
-    # Lưu lại tên trước khi xoá để ghi log
+    # Keep name before delete for history logging
     deleted_device_name = device.name
 
     await db.delete(device)
     await db.commit()
 
-    # Thêm log lịch sử
+    # Add history log
     await add_history_record(
         device_id=device_id,
         device_name=deleted_device_name,
-        action="Xóa thiết bị khỏi hệ thống",
+        action="Removed device from system",
         actor=str(admin.id),
         source="Web API (Delete)"
     )
 
 
-# --- PHẦN 2: ĐIỀU KHIỂN QUA MQTT ---
+# --- PART 2: MQTT CONTROL ---
 
 class DeviceControlRequest(BaseModel):
     isOn: bool
@@ -190,16 +191,16 @@ async def send_command(
     db: AsyncSession = Depends(get_db), 
     user: User = Depends(get_current_user) 
 ):
-    """Web gọi API này để gửi lệnh xuống mạch YoloBit qua MQTT"""
+    """Web client calls this API to send command via MQTT to YoloBit hardware."""
     device = await _get_device_or_404(db, device_id)
     
     if not device.hardwareId or not device.pin:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, 
-            detail="Thiết bị chưa liên kết phần cứng"
+            detail="Device is not linked to hardware"
         )
 
-    # Bắn lệnh qua MQTT
+    # Send command via MQTT
     try:
         from app.main import mqtt_service 
         await mqtt_service.publish_command(
@@ -209,8 +210,8 @@ async def send_command(
             value=payload.value
         )
 
-        # Thêm log lịch sử
-        action_detail = f"Gửi lệnh: {'Bật' if payload.isOn else 'Tắt'} (Giá trị: {payload.value})"
+        # Add history log
+        action_detail = f"Sent command: {'ON' if payload.isOn else 'OFF'} (Value: {payload.value})"
         await add_history_record(
             device_id=device.id,
             device_name=device.name,
@@ -219,13 +220,13 @@ async def send_command(
             source="Web Command"
         )
     except Exception as e:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Lỗi gửi MQTT: {e}")
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"MQTT publish error: {e}")
     
-    # Đợi mạch phản hồi vào topic 'state' thì DB mới cập nhật
-    return {"status": "success", "message": "Lệnh đã được gửi xuống mạch"}
+    # DB state is updated after hardware sends response to 'state' topic
+    return {"status": "success", "message": "Command sent to hardware"}
 
 
-# --- PHẦN 3: LỊCH TRÌNH ---
+# --- PART 3: SCHEDULES ---
 
 @router.post("/{device_id}/schedules", response_model=DeviceScheduleRead)
 async def create_schedule(
@@ -234,7 +235,7 @@ async def create_schedule(
     db: AsyncSession = Depends(get_db), 
     user: User = Depends(get_current_user)
 ):
-    """Hẹn giờ cho thiết bị"""
+    """Create a schedule for a device."""
     device = await _get_device_or_404(db, device_id)
         
     schedule = DeviceSchedule( 
@@ -254,7 +255,7 @@ async def get_device_history(
     user: User = Depends(get_current_user),
     limit: int = 20
 ):
-    """Lấy danh sách log lịch sử của một thiết bị cụ thể."""
+    """Get history logs for a specific device."""
     # Ensure device exists
     await _get_device_or_404(db, device_id)
     
@@ -263,29 +264,29 @@ async def get_device_history(
     result = await db.execute(stmt)
     return result.scalars().all()
 
-@router.get("/docs-websocket-info", tags=["Tài liệu WebSocket (Chỉ tra cứu)"])
+@router.get("/docs-websocket-info", tags=["WebSocket Docs (Reference Only)"])
 async def websocket_documentation_only():
     """
-    ### LƯU Ý: ĐÂY LÀ API GIẢ (DÙNG ĐỂ TRA CỨU TÀI LIỆU)
-    **không bấm "Execute" vì API này không trả về dữ liệu thực.**
+    ### NOTE: THIS IS A DOCUMENTATION-ONLY ENDPOINT
+    **Do not click "Execute"; this endpoint does not return live data.**
     
-    Hệ thống sử dụng 1 Ống Chung cho mỗi User. Dưới đây là hướng dẫn kết nối:
+    The system uses one shared stream per user. Connection guide:
 
     ---
-    ### 1. Mở kết nối
-    Dữ liệu của các thiết bị/cảm biến sẽ đổ về chung một đường link này.
+    ### 1. Open connection
+    Device/sensor events are delivered through this single URL.
     * **URL:** `ws://{{host}}/api/v1/ws?token={{your_jwt_token}}`
     
     ---
-    ### 2. Giao thức tin nhắn (JSON)
-    * **Server -> Client (Bắt tay thành công):** `{"type": "connection.ready", "user_id": 1}`
-    * **Client -> Server (Giữ mạng):** Gửi text: `{"type": "ping"}` định kỳ để nhận lại `{"type": "pong"}`.
+    ### 2. Message protocol (JSON)
+    * **Server -> Client (Handshake successful):** `{"type": "connection.ready", "user_id": 1}`
+    * **Client -> Server (Keepalive):** Send `{"type": "ping"}` periodically to receive `{"type": "pong"}`.
 
     ---
-    ### 3. Cấu trúc dữ liệu nhận được
-    Frontend dựa vào trường `"event"` để vẽ lại giao diện.
+    ### 3. Incoming payload shape
+    Frontend uses the `"event"` field to render updates.
 
-    **Sự kiện Cập nhật Cảm biến:**
+    **Sensor update event:**
     ```json
     {
       "event": "sensor_update",
@@ -293,7 +294,7 @@ async def websocket_documentation_only():
       "data": { "temp": 28, "humi": 70 }
     }
     ```
-    **Sự kiện Cập nhật Trạng thái (Bật/Tắt):**
+    **State update event (ON/OFF):**
     ```json
     {
       "event": "device_update",
@@ -303,4 +304,4 @@ async def websocket_documentation_only():
     }
     ```
     """
-    return {"detail": "Đây là trang tài liệu, không phải API thực tế."}
+    return {"detail": "This is a documentation page, not a live endpoint."}
