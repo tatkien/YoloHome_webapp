@@ -14,7 +14,6 @@ from app.schemas.schedule import DeviceScheduleCreate, DeviceScheduleRead
 from app.models.device import HardwareNode, DeviceLog
 from app.models.device_schedule import DeviceSchedule
 from app.schemas.hardware import HardwareNodeRead
-# from app.main import mqtt_service 
 from app.realtime.websocket_manager import realtime_manager
 from app.service.history import add_history_record
 from app.core.device_handle import DeviceHandler

@@ -142,6 +142,8 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('user_id', sa.Integer(), nullable=False),
     sa.Column('feature_vector', pgvector.sqlalchemy.vector.VECTOR(dim=512), nullable=False),
+    sa.Column('image_path', sa.String(length=512), nullable=True),
+    sa.Column('bbox', sa.JSON(), nullable=True),
     sa.Column('device_id', sa.String(length=64), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.ForeignKeyConstraint(['device_id'], ['devices.id'], ondelete='SET NULL'),

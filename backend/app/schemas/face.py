@@ -11,7 +11,9 @@ class FaceEnrollmentRead(BaseModel):
     user_id: int
     user_name: str | None = None
     feature_vector: list[float]
-    device_id: int | None = None
+    image_path: str | None = None
+    bbox: list[float] | None = None
+    device_id: str | None = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -23,7 +25,7 @@ class FaceEnrollmentRead(BaseModel):
 
 class FaceRecognitionLogRead(BaseModel):
     id: int
-    device_id: int | None = None
+    device_id: str | None = None
     image_path: str | None = None
     matched_enrollment_id: int | None = None
     matched_user_id: int | None = None
