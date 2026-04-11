@@ -2,11 +2,13 @@ services:
   db:
     image: pgvector/pgvector:pg17
     restart: unless-stopped
+    env_file:
+      - ./.env
     environment:
       TZ: Asia/Ho_Chi_Minh
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: REDACTED
-      POSTGRES_DB: yolohome
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_local}
+      POSTGRES_DB: ${POSTGRES_DB:-yolohome}
     ports:
       - "5433:5432"
     volumes:
@@ -20,13 +22,15 @@ services:
   backend:
     build: ./backend
     restart: unless-stopped
+    env_file:
+      - ./.env
     environment:
       TZ: Asia/Ho_Chi_Minh
-      DATABASE_URL: postgresql+asyncpg://postgres:REDACTED@db:5432/yolohome
-      MQTT_BROKER_URL: mqtt
-      MQTT_PORT: 1883
-      SECRET_KEY: changeme
-      DEBUG: "true"
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:change_me_local@db:5432/yolohome}
+      MQTT_BROKER_URL: ${MQTT_BROKER_URL:-mqtt}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+      SECRET_KEY: ${SECRET_KEY:-change_me_local}
+      DEBUG: ${DEBUG:-false}
     ports:
       - "8000:8000"
     depends_on:
@@ -41,6 +45,8 @@ services:
       context: ./frontend
       target: build
     restart: unless-stopped
+    env_file:
+      - ./.env
     environment:
       REACT_APP_API_URL: http://localhost:8000
     ports:
