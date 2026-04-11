@@ -17,12 +17,12 @@ SCHEDULE_POLL_SECONDS = 30
 logger = logging.getLogger(__name__)
 
 async def run_device_schedule_loop(stop_event: asyncio.Event) -> None:
-    """Vòng lặp chạy ngầm kiểm tra hẹn giờ mỗi 30 giây"""
+    """Background loop that checks schedules every 30 seconds."""
     while not stop_event.is_set():
         try:
             await _run_schedule_tick()
         except Exception:
-            logger.exception("Lỗi vòng lặp Device Schedule")
+            logger.exception("Device schedule loop error")
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=SCHEDULE_POLL_SECONDS)
         except TimeoutError:
@@ -36,7 +36,7 @@ async def _run_schedule_tick() -> None:
     async with AsyncSessionLocal() as db:
         db: AsyncSession
         
-        # 1. TÌM LỊCH TỚI GIỜ (JOIN với Device để lấy hardwareId)
+        # 1. Find schedules due now (join Device to get hardwareId)
         stmt = sa.select(DeviceSchedule, Device).join(
             Device, DeviceSchedule.device_id == Device.id
         ).where(
@@ -48,30 +48,30 @@ async def _run_schedule_tick() -> None:
             ),
         )
         result = await db.execute(stmt)
-        rows = result.all() # Trả về danh sách (schedule, device)
+        rows = result.all() # Returns list of (schedule, device)
 
         if not rows:
             return
 
         for schedule, device in rows:
-            # 2. ĐÁNH DẤU ĐÃ CHẠY HÔM NAY
+            # 2. Mark as triggered today
             schedule.last_triggered_on = today
 
-            # 3. BẮN LỆNH XUỐNG PHẦN CỨNG BẰNG MQTT
+            # 3. Send command to hardware via MQTT
             mqtt_payload = {
                 "device_id": device.id,
                 "pin": device.pin,
-                "action": schedule.action # "ON" hoặc "OFF"
+                "action": schedule.action # "ON" or "OFF"
             }
             # await mqtt_client.publish(f"yolobit/{device.hardwareId}/control", json.dumps(mqtt_payload))
-            logger.info(f"[Schedule] Đã bắn MQTT cho {device.name} -> {schedule.action}")
+            logger.info(f"[Schedule] MQTT command sent for {device.name} -> {schedule.action}")
 
-            # 4. GHI LOG LỊCH SỬ VÀO BẢNG DeviceLog
-            action_vn = "Bật" if str(schedule.action).upper() == "ON" else "Tắt"
-            msg = f"Hẹn giờ tự động: Lệnh {action_vn} đã được gửi"
+            # 4. Write activity log into DeviceLog
+            action_en = "ON" if str(schedule.action).upper() == "ON" else "OFF"
+            msg = f"Automated schedule: {action_en} command has been sent"
             await add_history_record(device.id, device.name, msg, "system", "Schedule")
 
-            # 5. BẮN WEBSOCKET BÁO CHO WEB BIẾT
+            # 5. Send websocket event to notify web clients
             user_ids = await DeviceHandler._get_authorized_users(db, device.id, device.hardwareId)
             
             if user_ids:
@@ -88,5 +88,5 @@ async def _run_schedule_tick() -> None:
                 for uid in user_ids:
                     await realtime_manager.send_to_user(uid, ws_payload)
 
-        # Lưu thay đổi last_triggered_on vào DB
+        # Persist last_triggered_on updates
         await db.commit()

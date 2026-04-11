@@ -21,13 +21,13 @@ async def lifespan(app: FastAPI):
     get_face_service()
     stop_event = asyncio.Event()
 
-    # Khởi chạy song song MQTT và Scheduler
+    # Start MQTT and scheduler in parallel
     mqtt_task = asyncio.create_task(mqtt_service.connect_and_subscribe())
     schedule_task = asyncio.create_task(run_device_schedule_loop(stop_event))
     try:
         yield
     finally:
-        print("Đang tắt Server, tiến hành dọn dẹp...")
+        print("Shutting down server, cleaning up resources...")
         stop_event.set()
         await schedule_task
         mqtt_task.cancel()
@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
             if mqtt_service.client:
                 await mqtt_service.client.disconnect()
         except Exception as e:
-                print(f"Lỗi ngắt kết nối MQTT: {e}")
+                print(f"Error disconnecting MQTT client: {e}")
 
 app = FastAPI(
     title="YoloHome API",
@@ -58,7 +58,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
-        "https://ais-dev-vkydgq6yhjsaeqxmdlnmdh-44308755185.asia-east1.run.app" # URL của giao diện này
+        "https://ais-dev-vkydgq6yhjsaeqxmdlnmdh-44308755185.asia-east1.run.app" # URL for this interface
     ],
     allow_credentials=True,
     allow_methods=["*"],

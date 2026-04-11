@@ -32,28 +32,27 @@ class Device(Base):
     scheduledOnTime = sa.Column(sa.String(32))
     scheduledOffTime = sa.Column(sa.String(32))
     meta_data = sa.Column(sa.JSON, nullable=True)
-    search_keywords = sa.Column(sa.Text, nullable=True, index=True) #Từ nhận diện để điều khiển giọng nói
+    search_keywords = sa.Column(sa.Text, nullable=True, index=True) 
     createdAt = sa.Column(sa.DateTime, server_default=sa.func.now())
     hardwareId = sa.Column(sa.String(64), sa.ForeignKey("hardware_nodes.id"), nullable=True)
     node = relationship("HardwareNode", back_populates="devices")
-    # Một thiết bị có thể share cho nhiều người
     shares = relationship("DeviceShare", back_populates="device", cascade="all, delete-orphan")
     schedules = relationship("DeviceSchedule", back_populates="device", cascade="all, delete-orphan")
 
 
 class DeviceLog(Base):
-    """Ghi lịch sử thiết bị"""
+    """Store device activity history."""
     __tablename__ = "device_logs"
     id = sa.Column(sa.Integer, primary_key=True, index=True)
     device_id = sa.Column(sa.String(64), sa.ForeignKey("devices.id", ondelete="SET NULL"))
     device_name = sa.Column(sa.String(128), nullable=False)
-    action = sa.Column(sa.String(255), nullable=False)  # Nội dung
-    actor = sa.Column(sa.String(128), nullable=True)    # Ai làm: "system" hoặc "user_id"
-    source = sa.Column(sa.String(128), nullable=True)   # Nguồn: Hardware, Web, Voice_Command, Face_ID
+    action = sa.Column(sa.String(255), nullable=False)  # Action details
+    actor = sa.Column(sa.String(128), nullable=True)    # Who performed it: "system" or "user_id"
+    source = sa.Column(sa.String(128), nullable=True)   # Source: Hardware, Web, Voice_Command, Face_ID
     created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.func.now(), index=True)
 
 class DeviceShare(Base):
-    """Phân quyền người dùng"""
+    """User access control mapping."""
     __tablename__ = "device_shares"
     id = sa.Column(sa.Integer, primary_key=True)
     device_id = sa.Column(sa.String(64), sa.ForeignKey("devices.id", ondelete="CASCADE"))

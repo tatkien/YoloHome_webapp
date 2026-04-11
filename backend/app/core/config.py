@@ -23,10 +23,10 @@ class Settings(BaseSettings):
     FACE_DETECTION_THRESHOLD: float = 0.7
 
     # --- HARDWARE SETTINGS ---
-    # Thời gian tự đóng khoá
+    # Auto-close delay for lock servo
     SERVO_AUTO_CLOSE_DELAY_MS: int = 5000 
     
-    # Các mốc góc quay cho Servo
+    # Servo angle presets
     SERVO_OPEN_ANGLE: int = 90
     SERVO_CLOSE_ANGLE: int = 0
 

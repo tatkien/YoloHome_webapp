@@ -12,7 +12,7 @@ class DeviceHandler:
     @staticmethod
     def guess_device_type(pin_name: str) -> str:
         """
-        Hàm nhận diện loại thiết bị theo tên chân (pin)
+        Infer device type from pin name.
         """
         name = pin_name.lower()
         
@@ -26,10 +26,10 @@ class DeviceHandler:
     
     @staticmethod
     async def _get_authorized_users(session: AsyncSession, hardware_id: str, device_id: str | None = None) -> list[int]:
-        """Lấy danh sách User được phép nhận thông báo"""
+        """Get list of users authorized to receive notifications."""
         authorized_users = set()
         
-        # 1. Tìm Chủ nhà (qua HardwareNode)
+        # 1. Find owner via HardwareNode
         stmt_owner = select(HardwareNode.owner_id).where(HardwareNode.id == hardware_id)
         res_owner = await session.execute(stmt_owner)
         owner_id = res_owner.scalar_one_or_none()
@@ -37,7 +37,7 @@ class DeviceHandler:
         if owner_id:
             authorized_users.add(owner_id)
             
-        # 2. Tìm người được chia sẻ thiết bị
+        # 2. Find users shared on this device
         if device_id:
             stmt_shared = select(DeviceShare.user_id).where(DeviceShare.device_id == device_id)
             res_shared = await session.execute(stmt_shared)
@@ -48,7 +48,7 @@ class DeviceHandler:
     
     @staticmethod
     async def process_announce(hardware_id: str, payload: dict):
-        """Xử lý khi mạch báo danh"""
+        """Handle hardware announce message."""
         data = MqttAnnounceSchema(**payload)
         async with AsyncSessionLocal() as session:
             session: AsyncSession
@@ -60,15 +60,15 @@ class DeviceHandler:
                 node.name = data.name
                 node.pins = data.pins
             else:
-                # Mạch mới lưu vào DB
+                # New hardware node, create in DB
                 new_node = HardwareNode(id=hardware_id, name=data.name, pins=data.pins)
                 session.add(new_node)
             await session.commit()
-            print(f"[Handler] Đã cập nhật mạch: {hardware_id}")
+            print(f"[Handler] Hardware updated: {hardware_id}")
 
     @staticmethod
     async def process_state(hardware_id: str, payload: dict):
-        """Xử lý phản hồi trạng thái (Dành cho Servo, Đèn, Quạt)"""
+        """Handle state feedback (servo/light/fan)."""
         data = MqttStateSchema(**payload) 
         async with AsyncSessionLocal() as session:
             session: AsyncSession
@@ -81,20 +81,20 @@ class DeviceHandler:
                 device_id_to_broadcast = None
                 
                 if device:
-                    # Thiết bị đã có trong DB
+                    # Device already exists in DB
                     if device.isOn != data.isOn or device.value != data.value:
                         device.isOn = data.isOn
                         device.value = data.value
                         
-                        msg = f"Cập nhật: {'Bật' if data.isOn else 'Tắt'}, Giá trị: {data.value}"
-                        await add_history_record(device.id, device.name, f"[Phản hồi] {msg}", "system", "Hardware")
+                        msg = f"Updated: {'ON' if data.isOn else 'OFF'}, Value: {data.value}"
+                        await add_history_record(device.id, device.name, f"[Feedback] {msg}", "system", "Hardware")
                         
                         await session.commit()
-                        print(f"[Handler] Đã đồng bộ thiết bị {data.pin} của mạch {hardware_id}")
+                        print(f"[Handler] Synced device {data.pin} on hardware {hardware_id}")
 
                         device_id_to_broadcast = device.id
                 else:
-                    # Tự khởi tạo servo
+                    # Auto-create servo lock device
                     if "servo" in data.pin.lower():
                         new_id = str(uuid.uuid4())
                         new_device = Device(
@@ -108,12 +108,12 @@ class DeviceHandler:
                         )
                         session.add(new_device)
                         await session.commit()
-                        print(f"[Handler] Đã tự động thêm khoá cửa ở chân {data.pin}")
+                        print(f"[Handler] Auto-added door lock on pin {data.pin}")
 
                         device_id_to_broadcast = new_id
 
                 # ==========================================
-                # GỬI WEBSOCKET ĐẾN NHỮNG NGƯỜI CÓ QUYỀN
+                    # SEND WEBSOCKET TO AUTHORIZED USERS
                 # ==========================================
                 if device_id_to_broadcast:
                     user_ids = await DeviceHandler._get_authorized_users(session, hardware_id, device_id_to_broadcast)
@@ -134,12 +134,12 @@ class DeviceHandler:
 
             except Exception as e:
                 await session.rollback()
-                print(f"[Handler] Lỗi cập nhật trạng thái: {e}")
+                print(f"[Handler] State update error: {e}")
     
 
     @staticmethod
     async def process_sensor(hardware_id: str, payload: dict):
-        """Xử lý dữ liệu cảm biến (Nhiệt độ, Độ ẩm)"""
+        """Handle sensor payloads (temperature/humidity)."""
         async with AsyncSessionLocal() as session:
             session: AsyncSession
 
@@ -155,12 +155,12 @@ class DeviceHandler:
                         if device.value != val:
                             device.value = val
                             is_changed = True
-                            await add_history_record(device.id, device.name, f"[Cảm biến] {val}", "system", "Hardware")
+                            await add_history_record(device.id, device.name, f"[Sensor] {val}", "system", "Hardware")
                     else:
                         new_device_id = str(uuid.uuid4())
                         new_device = Device(
                             id = new_device_id,
-                            name = f"Cảm biến ({pin_name})", 
+                            name = f"Sensor ({pin_name})", 
                             type = DeviceHandler.guess_device_type(pin_name),
                             hardwareId = hardware_id,
                             pin = pin_name,
@@ -168,16 +168,16 @@ class DeviceHandler:
                         )
                         session.add(new_device)
                         is_changed = True
-                        await add_history_record(new_device_id, new_device.name, f"[Cảm biến] Khởi tạo giá trị: {val}", "system", "Hardware")
+                        await add_history_record(new_device_id, new_device.name, f"[Sensor] Initialized value: {val}", "system", "Hardware")
                 
-                # WEBSOCKET KHI CÓ DỮ LIỆU THAY ĐỔI
+                # Send websocket only when data changed
                 if is_changed:
                     await session.commit()
-                    print(f"[Handler] Đã đồng bộ dữ liệu cảm biến mạch {hardware_id}")
+                    print(f"[Handler] Synced sensor data for hardware {hardware_id}")
                     # ==========================================
-                    # GỬI WEBSOCKET ĐẾN NHỮNG NGƯỜI CÓ QUYỀN
+                    # SEND WEBSOCKET TO AUTHORIZED USERS
                     # ==========================================
-                    # Check owner của bo mạch
+                    # Check hardware owner
                     user_ids = await DeviceHandler._get_authorized_users(session, hardware_id, device_id=None)
                     
                     if user_ids:
@@ -191,4 +191,4 @@ class DeviceHandler:
                     
             except Exception as e:
                 await session.rollback()
-                print(f"[Handler] Lỗi cập nhật cảm biến: {e}")
+                print(f"[Handler] Sensor update error: {e}")

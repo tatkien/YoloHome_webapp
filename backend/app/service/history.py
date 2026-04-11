@@ -11,11 +11,11 @@ async def add_history_record(
     db: AsyncSession = None
 ):
     """
-    Hàm dùng chung để ghi lại mọi biến động của hệ thống vào bảng DeviceLog.
+    Shared helper to store system activity records in DeviceLog.
     """
     async with AsyncSessionLocal() as session:
         try:
-            # 1. Khởi tạo đối tượng log mới
+            # 1. Create a new log record
             new_log = DeviceLog(
                 device_id=device_id,
                 device_name=device_name,
@@ -24,11 +24,11 @@ async def add_history_record(
                 source=source
             )
             
-            # 2. Lưu xuống Database
+            # 2. Persist to database
             session.add(new_log)
             await session.commit()
             
         except Exception as e:
-            # 3. Rollback nếu có lỗi Database để tránh treo
+            # 3. Roll back on database error
             await session.rollback()
-            print(f"[History Service] Lỗi khi ghi lịch sử cho thiết bị {device_name}: {e}")
+            print(f"[History Service] Failed to write history for device {device_name}: {e}")

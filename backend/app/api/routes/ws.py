@@ -14,7 +14,7 @@ async def authenticate_ws_user(token: str) -> User:
     if not token:
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Token required")
     
-    # Tự mở đóng DB context
+    # Open/close DB context locally in this helper
     async with AsyncSessionLocal() as db:
         try:
             payload = decode_access_token(token)
@@ -28,31 +28,31 @@ async def authenticate_ws_user(token: str) -> User:
             raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
 
 # ==========================================
-# ENDPOINT CHO USER
+# USER WEBSOCKET ENDPOINT
 # ==========================================
 @router.websocket("/ws")
 async def user_global_stream(
     websocket: WebSocket,
     token: str | None = Query(default=None),
 ):
-    # 1. Xác thực và lấy User
+    # 1. Authenticate and resolve user
     user = await authenticate_ws_user(token)
 
-    # 2. Chấp nhận kết nối và đưa vào Manager
+    # 2. Accept connection and register in manager
     await realtime_manager.connect_user(user.id, websocket)
     await websocket.send_json({"type": "connection.ready", "user_id": user.id})
 
-    # 3. Vòng lặp giữ kết nối
+    # 3. Keep connection alive
     try:
         while True:
-            # Nhận tin nhắn từ Client
+            # Receive message from client
             data = await websocket.receive_json()
             
-            # Xử lý Ping/Pong
+            # Handle ping/pong
             if data.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
                 
-            # Gửi lệnh xuống (nếu có)
+            # Placeholder: send command downstream (if any)
             elif data.get("action") == "toggle_device":
                 device_id = data.get("device_id")
                 
