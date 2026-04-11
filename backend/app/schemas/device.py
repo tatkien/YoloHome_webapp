@@ -1,31 +1,51 @@
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Optional, List, Dict, Any
 from datetime import datetime
-from typing import Literal
+from enum import Enum
 
-from pydantic import BaseModel, ConfigDict
+class DeviceType(str, Enum):
+    FAN = "fan"
+    LIGHT = "light"
+    CAMERA = "camera"
+    LOCK = "lock"
+    TEMP = "temp_sensor"
+    HUMI = "humidity_sensor"
+    UNKNOWN = "unknown"
 
-DeviceType = Literal["fan", "light", "camera", "temp_sensor", "humidity_sensor"]
-
-
-class DeviceCreate(BaseModel):
+class DeviceBase(BaseModel):
     name: str
-    device_type: DeviceType
-    description: str | None = None
-    is_active: bool = True
+    type: DeviceType
+    room: Optional[str] = None
+    pin: str
+    hardwareId: str
+    meta_data: Optional[Dict[str, Any]] = None      
+    search_keywords: Optional[str] = None           
 
+class DeviceCreate(DeviceBase):
+    pass
 
-class DeviceRead(BaseModel):
-    id: int
-    name: str
-    slug: str
-    device_type: str
-    description: str | None = None
-    owner_id: int
-    is_active: bool
-    last_seen_at: datetime | None = None
-    created_at: datetime
+class DeviceUpdate(BaseModel):
+    name: Optional[str] = None
+    room: Optional[str] = None
+    type: Optional[DeviceType] = None
+    description: Optional[str] = None
+    meta_data: Optional[Dict[str, Any]] = None     
+    search_keywords: Optional[str] = None           
 
+class DeviceRead(DeviceBase):
+    id: str
+    isOn: bool
+    value: int
+    last_seen_at: Optional[datetime] = None
     model_config = ConfigDict(from_attributes=True)
 
-
-class DeviceWithKey(DeviceRead):
-    device_key: str
+class DeviceLogRead(BaseModel):
+    id: int
+    device_id: Optional[str] = None
+    device_name: str
+    action: str
+    actor: Optional[str] = None
+    source: Optional[str] = None
+    created_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)

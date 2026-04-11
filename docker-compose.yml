@@ -5,6 +5,7 @@ services:
     env_file:
       - ./.env
     environment:
+      TZ: Asia/Ho_Chi_Minh
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_local}
       POSTGRES_DB: ${POSTGRES_DB:-yolohome}
@@ -24,9 +25,12 @@ services:
     env_file:
       - ./.env
     environment:
+      TZ: Asia/Ho_Chi_Minh
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:change_me_local@db:5432/yolohome}
+      MQTT_BROKER_URL: ${MQTT_BROKER_URL:-mqtt}
+      MQTT_PORT: ${MQTT_PORT:-1883}
       SECRET_KEY: ${SECRET_KEY:-change_me_local}
-      DEBUG: ${DEBUG:-true}
+      DEBUG: ${DEBUG:-false}
     ports:
       - "8000:8000"
     depends_on:
@@ -53,6 +57,18 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    
+  mqtt:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log  
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
 
 volumes:
   postgres_data:
+  mosquitto_data:
+  mosquitto_log:
