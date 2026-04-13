@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import sqlalchemy as sa
 
 from app.api.deps import get_current_user, get_admin_user, get_db
+from app.db.db_utils import reset_sequence_to_min_gap
 from app.models.device import Device, DeviceTypeEnum
 from app.models.user import User
 
@@ -356,6 +357,9 @@ async def create_schedule(
 
     # Convert list[time] to list of "HH:MM" strings for JSON storage
     times_list = [t.strftime("%H:%M") for t in payload.times_of_day]
+
+    # Keep sequence aligned with current gaps right before INSERT.
+    await reset_sequence_to_min_gap(db, "device_schedules", "device_schedules_id_seq")
 
     schedule = DeviceSchedule(
         device_id=device_id,

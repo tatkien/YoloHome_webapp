@@ -217,6 +217,10 @@ async def create_enrollment_from_image(
 
     image_path = _save_enrollment_image(contents, image.filename)
 
+    # Keep sequence aligned with current gaps right before INSERT to avoid duplicates
+    # after a previously reused ID.
+    await reset_sequence_to_min_gap(db, "face_enrollments", "face_enrollments_id_seq")
+
     enrollment = FaceEnrollment(
         user_id=user_id,
         feature_vector=embedding.tolist(),
