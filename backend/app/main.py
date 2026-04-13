@@ -32,10 +32,9 @@ async def lifespan(app: FastAPI):
         await schedule_task
         mqtt_task.cancel()
         try:
-            if mqtt_service.client:
-                await mqtt_service.client.disconnect()
-        except Exception as e:
-                print(f"Error disconnecting MQTT client: {e}")
+            await mqtt_task
+        except asyncio.CancelledError:
+            pass
 
 app = FastAPI(
     title="YoloHome API",

@@ -84,12 +84,12 @@ class MQTTService:
         except Exception as e:
             print(f"[MQTT Service] Error while processing message: {e}")
 
-    async def publish_command(self, hardware_id: str, pin: str, is_on: bool, value: int = 0):
+    async def publish_command(self, hardware_id: str, pin: str, is_on: bool, value: float = 0):
         """Public API method: enqueue command instead of publishing directly."""
         topic = f"smart_home/hardware/{hardware_id}/command"
         command_payload = {
             "pin": pin,
-            "isOn": is_on,
+            "is_on": is_on,
             "value": value
         }
         
