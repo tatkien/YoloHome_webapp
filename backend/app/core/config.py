@@ -20,9 +20,6 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "multidisciplinaryproject"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
-    SECRET_KEY: str = "multidisciplinaryproject"
-    JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     DEBUG: bool = True
     CORS_ORIGINS: str | list[str] = ["http://localhost:3000"]
     SETUP_CODE: str | None = None

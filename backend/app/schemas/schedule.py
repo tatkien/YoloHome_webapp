@@ -1,22 +1,26 @@
 from datetime import date, datetime, time
-from typing import Literal
+from enum import Enum
 
 from pydantic import BaseModel, ConfigDict
 
 
+class ScheduleActionEnum(str, Enum):
+    ON = "on"
+    OFF = "off"
+
+
 class DeviceScheduleCreate(BaseModel):
-    time_of_day: time
-    action: Literal["on", "off"]
+    times_of_day: list[time]
+    action: ScheduleActionEnum
     is_active: bool = True
 
 
 class DeviceScheduleRead(BaseModel):
     id: int
     device_id: str
-    time_of_day: time
+    times_of_day: list[str]
     action: str
     is_active: bool
-    created_by_id: int | None = None
     created_at: datetime
     last_triggered_on: date | None = None
 

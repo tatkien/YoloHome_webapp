@@ -456,3 +456,47 @@ code {
 .navbar .dropdown-toggle::after {
   vertical-align: 0.15em;
 }
+
+/* Device monitor cards */
+.device-monitor-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  transition: var(--transition);
+}
+
+.device-monitor-card:hover {
+  border-color: var(--accent-blue);
+  box-shadow: var(--shadow-glow);
+  transform: translateY(-2px);
+}
+
+/* Device log panel */
+.device-logs-panel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  margin-top: 0.5rem;
+}
+
+.device-log-entry {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.device-log-entry:last-child {
+  border-bottom: none;
+}
+
+/* Camera preview zone */
+.camera-preview-zone {
+  border: 2px dashed var(--border-color);
+  border-radius: var(--radius);
+  padding: 0.5rem;
+  background: var(--bg-input);
+  transition: var(--transition);
+}
+
+.camera-preview-zone:hover {
+  border-color: var(--accent-blue);
+}

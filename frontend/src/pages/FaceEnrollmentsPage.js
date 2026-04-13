@@ -22,13 +22,13 @@ export default function FaceEnrollmentsPage() {
   // Enroll modal
   const [showEnroll, setShowEnroll] = useState(false);
   const [enrollUserId, setEnrollUserId] = useState('');
-  const [enrollDeviceId, setEnrollDeviceId] = useState('');
   const [enrollFile, setEnrollFile] = useState(null);
   const [enrollPreview, setEnrollPreview] = useState(null);
   const [enrollInputMode, setEnrollInputMode] = useState('upload');
   const [cameraLoading, setCameraLoading] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
   const [enrollLoading, setEnrollLoading] = useState(false);
+  const [cameraDevice, setCameraDevice] = useState(null);
   const fileInputRef = useRef(null);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -61,6 +61,18 @@ export default function FaceEnrollmentsPage() {
 
   useEffect(() => { fetchEnrollments(); }, [fetchEnrollments]);
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
+
+  // Fetch camera device for enrollment
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await api.get('/face/camera');
+        setCameraDevice(res.data.camera);
+      } catch {
+        setCameraDevice(null);
+      }
+    })();
+  }, []);
 
   useEffect(() => () => {
     if (selectedEnrollmentImageUrl) {
@@ -169,7 +181,7 @@ export default function FaceEnrollmentsPage() {
       const formData = new FormData();
       formData.append('image', enrollFile);
       formData.append('user_id', enrollUserId);
-      if (enrollDeviceId) formData.append('device_id', enrollDeviceId);
+      formData.append('device_id', cameraDevice.id);
 
       await api.post('/face/enrollments/image', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -245,7 +257,6 @@ export default function FaceEnrollmentsPage() {
   const resetEnrollForm = () => {
     stopCamera();
     setEnrollUserId('');
-    setEnrollDeviceId('');
     setEnrollFile(null);
     setEnrollPreview(null);
     setEnrollInputMode('upload');
@@ -387,13 +398,24 @@ export default function FaceEnrollmentsPage() {
                   )}
                 </Form.Group>
                 <Form.Group className="mb-3">
-                  <Form.Label>Device ID <small style={{ color: 'var(--text-muted)' }}>(optional)</small></Form.Label>
-                  <Form.Control
-                    type="number"
-                    placeholder="Scope to a specific device"
-                    value={enrollDeviceId}
-                    onChange={(e) => setEnrollDeviceId(e.target.value)}
-                  />
+                  <Form.Label>Camera Device</Form.Label>
+                  {cameraDevice ? (
+                    <div style={{
+                      background: 'var(--bg-input)', border: '1px solid var(--border-color)',
+                      borderRadius: 'var(--radius-sm)', padding: '0.65rem 1rem',
+                      color: 'var(--accent-green)', fontWeight: 600,
+                    }}>
+                      📷 {cameraDevice.name} ({cameraDevice.id})
+                    </div>
+                  ) : (
+                    <div style={{
+                      background: 'var(--bg-input)', border: '1px solid var(--accent-red)',
+                      borderRadius: 'var(--radius-sm)', padding: '0.65rem 1rem',
+                      color: 'var(--accent-red)',
+                    }}>
+                      No camera device found. Add a camera device first.
+                    </div>
+                  )}
                 </Form.Group>
                 <Form.Group className="mb-3">
                   <Form.Label>Face Photo</Form.Label>
@@ -502,7 +524,7 @@ export default function FaceEnrollmentsPage() {
             <Button type="button" variant="outline-light" onClick={() => { setShowEnroll(false); resetEnrollForm(); }}>
               Cancel
             </Button>
-            <Button type="submit" disabled={enrollLoading || !enrollFile || !enrollUserId}>
+            <Button type="submit" disabled={enrollLoading || !enrollFile || !enrollUserId || !cameraDevice}>
               {enrollLoading ? <Spinner size="sm" animation="border" /> : 'Enroll Face'}
             </Button>
           </Modal.Footer>

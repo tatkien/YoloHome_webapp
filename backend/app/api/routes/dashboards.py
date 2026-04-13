@@ -83,37 +83,3 @@ async def read_dashboard(
     )
 
 
-@router.post(
-    "/{dashboard_id}/widgets",
-    response_model=DashboardWidgetRead,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_dashboard_widget(
-    dashboard_id: int,
-    payload: DashboardWidgetCreate,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    await _get_dashboard_or_404(db, dashboard_id, current_user.id)
-    if payload.feed_id is not None:
-        result = await db.execute(sa.select(Feed).where(Feed.id == payload.feed_id))
-        if result.scalar_one_or_none() is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Feed not found",
-            )
-
-    widget = DashboardWidget(
-        dashboard_id=dashboard_id,
-        title=payload.title,
-        widget_type=payload.widget_type,
-        position_x=payload.position_x,
-        position_y=payload.position_y,
-        width=payload.width,
-        height=payload.height,
-        config=payload.config,
-    )
-    db.add(widget)
-    await db.commit()
-    await db.refresh(widget)
-    return widget
