@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.device import Device, DeviceTypeEnum, HardwareNode
 from app.schemas.mqtt import MqttAnnounceSchema, MqttStateSchema
 from app.realtime.websocket_manager import realtime_manager
-from app.service.history import add_history_record
+from app.service.history import add_history_record, add_sensor_data
 
 
 class DeviceHandler:
@@ -83,13 +83,17 @@ class DeviceHandler:
                 device_id_to_broadcast = None
 
                 if device:
-                    # Auto-set is_on based on value
                     new_value = data.value
                     new_is_on = data.is_on
 
                     if device.is_on != new_is_on or device.value != new_value:
                         device.is_on = new_is_on
                         device.value = new_value  # @validates on Device handles range checks
+
+                        await session.commit()
+                        print(
+                            f"[Handler] Synced device {data.pin} on hardware {hardware_id}"
+                        )
 
                         msg = f"Updated: {'ON' if new_is_on else 'OFF'}, Value: {new_value}"
                         await add_history_record(
@@ -98,11 +102,6 @@ class DeviceHandler:
                             f"[Feedback] {msg}",
                             "system",
                             "Hardware",
-                        )
-
-                        await session.commit()
-                        print(
-                            f"[Handler] Synced device {data.pin} on hardware {hardware_id}"
                         )
 
                         device_id_to_broadcast = device.id
@@ -158,27 +157,22 @@ class DeviceHandler:
             session: AsyncSession
 
             try:
-                is_changed = False
-
                 for pin_name, val in payload.items():
+                    is_changed = False
+
                     stmt = select(Device).where(
                         Device.hardware_id == hardware_id, Device.pin == pin_name
                     )
                     res = await session.execute(stmt)
                     device = res.scalar_one_or_none()
-
+                    device_id = device.id if device else None
+                    device_type = device.type if device else None
+                    device_name = device.name if device else f"Sensor ({pin_name})"
                     if device:
                         if device.value != val:
                             device.value = val
                             device.is_on = True
                             is_changed = True
-                            await add_history_record(
-                                device.id,
-                                device.name,
-                                f"[Sensor] {val}",
-                                "system",
-                                "Hardware",
-                            )
                     else:
                         # Attempt to guess device type — raises ValueError if unknown pin
                         try:
@@ -187,9 +181,10 @@ class DeviceHandler:
                             print(f"[Handler] Skipping unknown sensor pin: {e}")
                             continue
 
-                        new_device_id = str(uuid.uuid4())
+                        device_id = str(uuid.uuid4())
+                        device_type = DeviceTypeEnum(device_type)
                         new_device = Device(
-                            id=new_device_id,
+                            id=device_id,
                             name=f"Sensor ({pin_name})",
                             type=device_type,
                             hardware_id=hardware_id,
@@ -199,35 +194,41 @@ class DeviceHandler:
                         )
                         session.add(new_device)
                         is_changed = True
+                       
+
+                    # Send websocket only when data changed
+                    if is_changed:
+                        await session.commit()
                         await add_history_record(
-                            new_device_id,
-                            new_device.name,
-                            f"[Sensor] Initialized value: {val}",
+                            device_id,
+                            device_name,
+                            f"[Sensor] {val}",
                             "system",
                             "Hardware",
                         )
+                        await add_sensor_data(
+                            device_id,
+                            val,
+                            DeviceTypeEnum(device_type),
+                        )
+                        print(
+                            f"[Handler] Synced sensor data for hardware {hardware_id}"
+                        )
+                        # ==========================================
+                        # SEND WEBSOCKET TO ALL CONNECTED USERS
+                        # ==========================================
+                        user_ids = await DeviceHandler._get_authorized_users(
+                            session, hardware_id, device_id=None
+                        )
 
-                # Send websocket only when data changed
-                if is_changed:
-                    await session.commit()
-                    print(
-                        f"[Handler] Synced sensor data for hardware {hardware_id}"
-                    )
-                    # ==========================================
-                    # SEND WEBSOCKET TO ALL CONNECTED USERS
-                    # ==========================================
-                    user_ids = await DeviceHandler._get_authorized_users(
-                        session, hardware_id, device_id=None
-                    )
-
-                    if user_ids:
-                        ws_payload = {
-                            "event": "sensor_update",
-                            "hardware_id": hardware_id,
-                            "data": payload,
-                        }
-                        for uid in user_ids:
-                            await realtime_manager.send_to_user(uid, ws_payload)
+                        if user_ids:
+                            ws_payload = {
+                                "event": "sensor_update",
+                                "hardware_id": hardware_id,
+                                "data": payload,
+                            }
+                            for uid in user_ids:
+                                await realtime_manager.send_to_user(uid, ws_payload)
 
             except Exception as e:
                 await session.rollback()

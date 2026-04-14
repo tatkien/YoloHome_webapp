@@ -13,15 +13,6 @@ class MqttSensorSchema(BaseModel):
     # Accept pairs such as {"temp": 30, "humi": 70}
     data: Dict[str, Any]
 
-
-# Device command schema
-class MqttCommandSchema(BaseModel):
-    pin: str
-    is_on: bool
-    # Light/fan/servo value in range 0..1023.
-    value: float = Field(0, ge=0, le=1023)
-
-
 # Device state feedback schema
 class MqttStateSchema(BaseModel):
     pin: str

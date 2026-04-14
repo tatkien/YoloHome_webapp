@@ -65,36 +65,28 @@ async def reset_sequence_to_min_gap(
 
     await db.execute(
         sa.text(
-            f"""
-            WITH stats AS (
-                SELECT MIN(id) AS min_id, MAX(id) AS max_id
-                FROM {table_ref}
-            ),
-            ordered AS (
-                SELECT
-                    id,
-                    LAG(id) OVER (ORDER BY id) AS prev_id
-                FROM {table_ref}
-            ),
-            gap AS (
-                -- First internal gap: ..., n, n+2, ...
-                SELECT (prev_id + 1) AS next_id
-                FROM ordered
-                WHERE prev_id IS NOT NULL AND id > prev_id + 1
-                ORDER BY prev_id
-                LIMIT 1
-            ),
-            target AS (
-                SELECT CASE
-                    WHEN (SELECT min_id FROM stats) IS NULL THEN 1
-                    WHEN (SELECT min_id FROM stats) > 1 THEN 1
-                    ELSE COALESCE(
-                        (SELECT next_id FROM gap),
-                        (SELECT max_id + 1 FROM stats)
-                    )
-                END AS next_id
+            f"""WITH stats AS (
+            SELECT 
+                COALESCE(MIN(id), 0) AS min_id,
+                COALESCE(MAX(id), 0) AS max_id
+            FROM {table_ref}
             )
-            SELECT setval('{seq_ref}'::regclass, (SELECT next_id FROM target), false)
+            SELECT setval(
+                '{seq_ref}'::regclass,
+                CASE
+                    WHEN stats.min_id = 0 OR stats.min_id > 1 THEN 1
+                    ELSE COALESCE(
+                        (SELECT id + 1 
+                        FROM {table_ref} t1
+                        WHERE NOT EXISTS (SELECT 1 FROM {table_ref} t2 WHERE t2.id = t1.id + 1)
+                        ORDER BY id 
+                        LIMIT 1),
+                        stats.max_id + 1
+                    )
+                END,
+                false
+            )
+            FROM stats;
             """
         )
     )

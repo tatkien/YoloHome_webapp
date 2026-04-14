@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Optional, Dict, Any
 from datetime import datetime
 from enum import Enum
@@ -55,5 +55,11 @@ class DeviceLogRead(BaseModel):
 
 
 class DeviceControlRequest(BaseModel):
-    is_on: bool
-    value: float = Field(0, ge=0, le=1023)
+    is_on: Optional[bool] = None
+    value: Optional[float] = Field(None, ge=0, le=1023)
+    
+    @model_validator(mode="after")
+    def validate_control(self) -> "DeviceControlRequest":
+        if self.is_on is None and self.value is None:
+            raise ValueError("At least one of 'is_on' or 'value' must be provided")
+        return self

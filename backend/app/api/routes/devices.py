@@ -330,7 +330,7 @@ async def send_command(
             device_id=device.id,
             device_name=device.name,
             action=action_detail,
-            actor=str(user.id),
+            actor=str(f"User: {user.id}"),
             source="Web Command",
         )
     except Exception as e:

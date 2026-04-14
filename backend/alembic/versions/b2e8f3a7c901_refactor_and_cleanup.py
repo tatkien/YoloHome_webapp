@@ -137,9 +137,37 @@ def upgrade() -> None:
         ondelete='CASCADE',
     )
 
+    # ---------------------------------------------------------------
+    # 9. Create sensor_data table
+    # ---------------------------------------------------------------
+    op.create_table(
+        'sensor_data',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('device_id', sa.String(length=64), nullable=True),
+        sa.Column('value', sa.Float(), nullable=False),
+        sa.Column(
+            'sensor_type',
+            sa.Enum('fan', 'light', 'camera', 'lock', 'temp_sensor', 'humidity_sensor', name='sensor_type_enum'),
+            nullable=False
+        ),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+        sa.ForeignKeyConstraint(['device_id'], ['devices.id'], ondelete='CASCADE'),
+        sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_sensor_data_device_id'), 'sensor_data', ['device_id'], unique=False)
+    op.create_index(op.f('ix_sensor_data_created_at'), 'sensor_data', ['created_at'], unique=False)
+    op.create_index(op.f('ix_sensor_data_id'), 'sensor_data', ['id'], unique=False)
+
 
 def downgrade() -> None:
     """Downgrade schema."""
+
+    # 9. Drop sensor_data table
+    op.drop_index(op.f('ix_sensor_data_id'), table_name='sensor_data')
+    op.drop_index(op.f('ix_sensor_data_created_at'), table_name='sensor_data')
+    op.drop_index(op.f('ix_sensor_data_device_id'), table_name='sensor_data')
+    op.drop_table('sensor_data')
+    op.execute("DROP TYPE IF EXISTS sensor_type_enum")
 
     # 8. Revert face_recognition_logs.device_id to nullable + SET NULL
     op.drop_constraint(

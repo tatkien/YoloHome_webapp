@@ -77,12 +77,29 @@ class DeviceLog(Base):
 
     id = sa.Column(sa.Integer, primary_key=True, index=True)
     device_id = sa.Column(
-        sa.String(64), sa.ForeignKey("devices.id", ondelete="SET NULL")
+        sa.String(64), sa.ForeignKey("devices.id", ondelete="CASCADE")
     )
     device_name = sa.Column(sa.String(128), nullable=False)
     action = sa.Column(sa.String(255), nullable=False)
     actor = sa.Column(sa.String(128), nullable=True)
     source = sa.Column(sa.String(128), nullable=True)
+    created_at = sa.Column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), index=True
+    )
+
+class SensorData(Base):
+    """Store time-series data for sensors."""
+
+    __tablename__ = "sensor_data"
+
+    id = sa.Column(sa.Integer, primary_key=True, index=True)
+    device_id = sa.Column(
+        sa.String(64), sa.ForeignKey("devices.id", ondelete="CASCADE"), index=True
+    )
+    value = sa.Column(sa.Float, nullable=False)
+    sensor_type = sa.Column(sa.Enum(DeviceTypeEnum, 
+                                    values_callable=lambda enum_cls: [e.value for e in enum_cls],
+                                    name="sensor_type_enum"), nullable=False)
     created_at = sa.Column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), index=True
     )
