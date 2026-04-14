@@ -277,20 +277,8 @@ async def delete_device(
     """Delete a device."""
     device = await _get_device_or_404(db, device_id)
 
-    # Keep name before delete for history logging
-    deleted_device_name = device.name
-
     await db.delete(device)
     await db.commit()
-
-    # Add history log
-    await add_history_record(
-        device_id=device_id,
-        device_name=deleted_device_name,
-        action="Removed device from system",
-        actor=str(admin.id),
-        source="Web API (Delete)",
-    )
 
 
 # --- PART 2: MQTT CONTROL ---
