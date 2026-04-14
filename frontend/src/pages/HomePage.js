@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Container, Row, Col, Card, Button, Alert, Spinner, Badge } from 'react-bootstrap';
+import { Container, Row, Col, Card, Button, Alert, Spinner, Badge, Form, ButtonGroup } from 'react-bootstrap';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
 
@@ -75,6 +75,44 @@ export default function HomePage() {
     fetchDevices();
     fetchCamera();
   }, [fetchDevices, fetchCamera]);
+
+  useEffect(() => {
+    const handleWsMessage = (e) => {
+      const payload = e.detail;
+      if (payload.event === 'sensor_update') {
+        setDevices((prev) => prev.map(d => {
+          if (d.hardware_id === payload.hardware_id && payload.data[d.pin] !== undefined) {
+            return { ...d, value: payload.data[d.pin] };
+          }
+          return d;
+        }));
+      } else if (payload.event === 'device_update') {
+        setDevices((prev) => prev.map(d => {
+          if (d.id === payload.device_id) {
+            return { ...d, is_on: payload.data.is_on, value: payload.data.value };
+          }
+          return d;
+        }));
+      }
+    };
+    window.addEventListener('yolohome:ws', handleWsMessage);
+    return () => window.removeEventListener('yolohome:ws', handleWsMessage);
+  }, []);
+
+  const handleDeviceCommand = async (deviceId, isOn, value) => {
+    // Optimistic UI update
+    setDevices((prev) => prev.map(d => d.id === deviceId ? { ...d, is_on: isOn, value } : d));
+    try {
+      await api.post(`/devices/${deviceId}/command`, {
+        is_on: isOn,
+        value: value
+      });
+    } catch (err) {
+      console.error("Failed to send command", err);
+      // Revert state by fetching truth from server
+      fetchDevices();
+    }
+  };
 
   // --- Recognition result helpers ---
   const statusText = (result?.status || '').toLowerCase();
@@ -375,12 +413,61 @@ export default function HomePage() {
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
                     {d.room || 'No room'}
                   </div>
-                  <div style={{
-                    fontSize: '1.1rem', fontWeight: 700,
-                    color: d.is_on ? 'var(--accent-green)' : 'var(--text-muted)',
-                  }}>
-                    {renderDeviceValue(d)}
-                  </div>
+
+                  {d.type === 'light' && (
+                    <div className="d-flex justify-content-center align-items-center mt-3">
+                      <Form.Check 
+                        type="switch" 
+                        id={`switch-${d.id}`}
+                        checked={d.is_on} 
+                        onChange={(e) => handleDeviceCommand(d.id, e.target.checked, e.target.checked ? 1 : 0)} 
+                      />
+                      <span className="ms-2 fw-bold" style={{ color: d.is_on ? 'var(--accent-green)' : 'var(--text-muted)' }}>
+                        {d.is_on ? 'ON' : 'OFF'}
+                      </span>
+                    </div>
+                  )}
+
+                  {d.type === 'fan' && (
+                    <div className="mt-3">
+                      <div className="d-flex justify-content-center align-items-center mb-2">
+                        <Form.Check 
+                          type="switch" 
+                          id={`switch-${d.id}`}
+                          checked={d.is_on} 
+                          onChange={(e) => {
+                            const willBeOn = e.target.checked;
+                            handleDeviceCommand(d.id, willBeOn, willBeOn ? (d.value > 0 ? d.value : 1) : 0);
+                          }} 
+                        />
+                        <span className="ms-2 fw-bold" style={{ color: d.is_on ? 'var(--accent-green)' : 'var(--text-muted)' }}>
+                          {d.is_on ? 'ON' : 'OFF'}
+                        </span>
+                      </div>
+                      {d.is_on && (
+                        <ButtonGroup size="sm" className="w-100 mt-2">
+                          {[1, 2, 3].map(lvl => (
+                            <Button 
+                              key={lvl} 
+                              variant={d.value === lvl ? "primary" : "outline-primary"}
+                              onClick={() => handleDeviceCommand(d.id, true, lvl)}
+                            >
+                              Speed {lvl}
+                            </Button>
+                          ))}
+                        </ButtonGroup>
+                      )}
+                    </div>
+                  )}
+
+                  {!['light', 'fan'].includes(d.type) && (
+                    <div className="mt-3" style={{
+                      fontSize: '1.1rem', fontWeight: 700,
+                      color: d.is_on || d.value > 0 ? 'var(--accent-green)' : 'var(--text-muted)',
+                    }}>
+                      {renderDeviceValue(d)}
+                    </div>
+                  )}
                 </Card.Body>
               </Card>
             </Col>

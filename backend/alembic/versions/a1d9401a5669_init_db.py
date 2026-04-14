@@ -103,13 +103,13 @@ def upgrade() -> None:
     op.create_index(op.f('ix_devices_type'), 'devices', ['type'], unique=False)
     op.create_table('device_logs',
     sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('device_id', sa.String(length=64), nullable=True),
+    sa.Column('device_id', sa.String(length=64), nullable=False),
     sa.Column('device_name', sa.String(length=128), nullable=False),
     sa.Column('action', sa.String(length=255), nullable=False),
     sa.Column('actor', sa.String(length=128), nullable=True),
     sa.Column('source', sa.String(length=128), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-    sa.ForeignKeyConstraint(['device_id'], ['devices.id'], ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['device_id'], ['devices.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_device_logs_created_at'), 'device_logs', ['created_at'], unique=False)
