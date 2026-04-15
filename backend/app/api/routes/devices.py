@@ -9,7 +9,7 @@ from app.models.device import Device, DeviceTypeEnum
 from app.models.user import User
 
 from app.schemas.device import DeviceRead, DeviceUpdate, DeviceCreate, DeviceLogRead, DeviceControlRequest
-from app.schemas.schedule import DeviceScheduleCreate, DeviceScheduleRead
+from app.schemas.schedule import DeviceScheduleCreate, DeviceScheduleUpdate, DeviceScheduleRead
 from app.models.device import HardwareNode, DeviceLog
 from app.models.device_schedule import DeviceSchedule
 from app.schemas.hardware import HardwareNodeRead
@@ -306,8 +306,7 @@ async def send_command(
         await mqtt_service.publish_command(
             hardware_id=device.hardware_id,
             pin=device.pin,
-            is_on=payload.is_on,
-            value=payload.value,
+            payload=payload
         )
 
         # Add history log
@@ -338,27 +337,76 @@ async def create_schedule(
     device_id: str,
     payload: DeviceScheduleCreate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_admin_user),
 ):
     """Create a schedule for a device."""
     await _get_device_or_404(db, device_id)
-
-    # Convert list[time] to list of "HH:MM" strings for JSON storage
-    times_list = [t.strftime("%H:%M") for t in payload.times_of_day]
-
-    # Keep sequence aligned with current gaps right before INSERT.
-    await reset_sequence_to_min_gap(db, "device_schedules", "device_schedules_id_seq")
+    # Don't allow schedules with servo and sensor types for now
+    device_type = await db.scalar(
+        sa.select(Device.type).where(Device.id == device_id)
+    )
+    if device_type in (DeviceTypeEnum.LOCK, DeviceTypeEnum.TEMP_SENSOR, DeviceTypeEnum.HUMIDITY_SENSOR):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="Scheduling is not supported for lock and sensor devices",
+        )
 
     schedule = DeviceSchedule(
         device_id=device_id,
         action=payload.action,
-        times_of_day=times_list,
+        time_of_day=payload.time_of_day,
+        is_active=payload.is_active,
     )
     db.add(schedule)
     await db.commit()
     await db.refresh(schedule)
     return schedule
 
+
+@router.get("/{device_id}/schedules", response_model=List[DeviceScheduleRead])
+async def list_schedules(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """List all schedules for a device."""
+    await _get_device_or_404(db, device_id)
+
+    result = await db.execute(
+        sa.select(DeviceSchedule).where(DeviceSchedule.device_id == device_id)
+    )
+    return result.scalars().all()
+
+@router.put("/schedules/{schedule_id}", response_model=DeviceScheduleRead)
+async def update_schedule(
+    schedule_id: str,
+    payload: DeviceScheduleUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_admin_user),
+):
+    """Update a device schedule."""
+    schedule = await db.get(DeviceSchedule, schedule_id)
+    if not schedule:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Schedule not found")
+
+    schedule.time_of_day = payload.time_of_day
+    await db.commit()
+    await db.refresh(schedule)
+    return schedule
+
+@router.delete("/schedules/{schedule_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_schedule(
+    schedule_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_admin_user),
+):
+    """Delete a device schedule."""
+    schedule = await db.get(DeviceSchedule, schedule_id)
+    if not schedule:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Schedule not found")
+
+    await db.delete(schedule)
+    await db.commit()
 
 @router.get("/{device_id}/history", response_model=List[DeviceLogRead])
 async def get_device_history(

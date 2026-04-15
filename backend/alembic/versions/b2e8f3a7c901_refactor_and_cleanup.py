@@ -54,16 +54,6 @@ def upgrade() -> None:
     # ---------------------------------------------------------------
     op.drop_table('device_shares')
 
-    # ---------------------------------------------------------------
-    # 4. device_schedules: rename time_of_day -> times_of_day, change
-    #    type from Time to JSON; change action from varchar to enum
-    # ---------------------------------------------------------------
-    # Drop old column and recreate as JSON
-    op.drop_column('device_schedules', 'time_of_day')
-    op.add_column(
-        'device_schedules',
-        sa.Column('times_of_day', sa.JSON(), nullable=False, server_default='[]'),
-    )
 
     # Create the schedule_action_enum type
     schedule_action_enum = sa.Enum('on', 'off', name='schedule_action_enum')

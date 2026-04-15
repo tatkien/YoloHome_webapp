@@ -1,9 +1,10 @@
 import json
 import asyncio
 import aiomqtt
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from app.core.device_handle import DeviceHandler
 from app.core.config import settings
+from app.schemas.device import DeviceControlRequest
 
 class MQTTService:
     def __init__(self):
@@ -84,22 +85,22 @@ class MQTTService:
         except Exception as e:
             print(f"[MQTT Service] Error while processing message: {e}")
 
-    async def publish_command(self, hardware_id: str, pin: str, is_on: bool, value: float):
+    async def publish_command(self, hardware_id: str, pin: str, payload: DeviceControlRequest):
         """Public API method: enqueue command instead of publishing directly."""
         topic = f"smart_home/hardware/{hardware_id}/command"
         # Guess value based on is_on and reverse-guessing logic in DeviceHandler
-        if is_on is None:
-            is_on = value > 0
-        elif value is None:
-            value = is_on   # Light, fan, servo: 0 or 1
+        if payload.is_on is None:
+            payload.is_on = payload.value > 0
+        elif payload.value is None:
+            payload.value = payload.is_on   # Light, fan, servo: 0 or 1
         
-        if not value.is_integer():
+        if not payload.value.is_integer():
             raise ValueError("Value must be an integer") # Camera, fan speed, light and servo only accept integer values
 
         command_payload = {
             "pin": pin,
-            "is_on": is_on,
-            "value": int(value)
+            "is_on": payload.is_on,
+            "value": int(payload.value)
         }
         
         # Enqueue command for publisher worker

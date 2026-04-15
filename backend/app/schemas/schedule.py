@@ -10,15 +10,17 @@ class ScheduleActionEnum(str, Enum):
 
 
 class DeviceScheduleCreate(BaseModel):
-    times_of_day: list[time]
+    time_of_day: time
     action: ScheduleActionEnum
     is_active: bool = True
 
+class DeviceScheduleUpdate(BaseModel):
+    time_of_day: time
 
 class DeviceScheduleRead(BaseModel):
-    id: int
+    id: str
     device_id: str
-    times_of_day: list[str]
+    time_of_day: time
     action: str
     is_active: bool
     created_at: datetime
