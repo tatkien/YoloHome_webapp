@@ -115,10 +115,10 @@ def upgrade() -> None:
     op.create_index(op.f('ix_device_logs_created_at'), 'device_logs', ['created_at'], unique=False)
     op.create_index(op.f('ix_device_logs_id'), 'device_logs', ['id'], unique=False)
     op.create_table('device_schedules',
-    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('id', sa.String(length=64), nullable=False),
     sa.Column('device_id', sa.String(length=64), nullable=False),
     sa.Column('time_of_day', sa.Time(), nullable=False),
-    sa.Column('action', sa.String(length=16), nullable=False),
+    sa.Column('action', sa.String(length=8), nullable=False),
     sa.Column('is_active', sa.Boolean(), server_default=sa.text('true'), nullable=False),
     sa.Column('created_by_id', sa.Integer(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),

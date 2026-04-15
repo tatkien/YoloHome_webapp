@@ -7,17 +7,19 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import AsyncSessionLocal
-from app.models.device_schedule import DeviceSchedule
+from app.models.device_schedule import DeviceSchedule, ScheduleActionEnum
 from app.models.device import Device
 from app.realtime.websocket_manager import realtime_manager
 from app.service.history import add_history_record
+from app.service.mqtt import mqtt_service
+from app.schemas.device import DeviceControlRequest
 
 SCHEDULE_POLL_SECONDS = 30
 logger = logging.getLogger(__name__)
 
 
 async def run_device_schedule_loop(stop_event: asyncio.Event) -> None:
-    """Background loop that checks schedules every 30 seconds."""
+    """Background loop that checks schedules every 1 minute."""
     while not stop_event.is_set():
         try:
             await _run_schedule_tick()
@@ -56,33 +58,32 @@ async def _run_schedule_tick() -> None:
             return
 
         for schedule, device in rows:
-            # 2. Check if current time matches any time in the schedule's times_of_day list
-            times_list = schedule.times_of_day or []
-            if current_hhmm not in times_list:
+            time = schedule.time_of_day
+            if current_hhmm != time.strftime("%H:%M"):
                 continue
 
-            # 3. Mark as triggered today
+            # Mark as triggered today
             schedule.last_triggered_on = today
 
-            # 4. Send command to hardware via MQTT
-            mqtt_payload = {
-                "device_id": device.id,
-                "pin": device.pin,
-                "action": schedule.action.value if hasattr(schedule.action, 'value') else schedule.action,
-            }
-            # await mqtt_client.publish(f"yolobit/{device.hardware_id}/control", json.dumps(mqtt_payload))
+            # Send command to hardware via MQTT
+            await mqtt_service.publish_command(hardware_id=device.hardware_id, 
+                                               pin=device.pin,
+                                               payload=DeviceControlRequest(
+                                                   is_on=schedule.action == ScheduleActionEnum.ON
+                                               ))
+            
             logger.info(
                 f"[Schedule] MQTT command sent for {device.name} -> {schedule.action}"
             )
 
-            # 5. Write activity log into DeviceLog
+            # Write activity log into DeviceLog
             action_str = schedule.action.value.upper() if hasattr(schedule.action, 'value') else str(schedule.action).upper()
             msg = f"Automated schedule: {action_str} command has been sent"
             await add_history_record(
                 device.id, device.name, msg, "system", "Schedule"
             )
 
-            # 6. Send websocket event to all connected users
+            # Send websocket event to all connected users
             user_ids = list(realtime_manager.active_connections.keys())
 
             if user_ids:
