@@ -290,7 +290,7 @@ export default function HomePage() {
           <h1 style={{ fontWeight: 700, fontSize: '2rem', marginBottom: '0.25rem' }}>
             Welcome, <span style={{ background: 'var(--gradient-primary)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>{user?.username}</span>
           </h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '1rem' }}>YoloHome Smart Dashboard</p>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '1rem' }}>YoloHome Control Center</p>
         </Col>
       </Row>
 

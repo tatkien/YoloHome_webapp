@@ -63,3 +63,12 @@ class DeviceControlRequest(BaseModel):
         if self.is_on is None and self.value is None:
             raise ValueError("At least one of 'is_on' or 'value' must be provided")
         return self
+
+class SensorDataRead(BaseModel):
+    id: int
+    device_id: str
+    value: float
+    sensor_type: DeviceType
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
