@@ -246,10 +246,8 @@ export default function FaceEnrollmentsPage() {
             <Table hover>
               <thead>
                 <tr>
-                  <th>ID</th>
                   <th>User</th>
                   <th>Device</th>
-                  <th>Vector Dim</th>
                   <th>Created</th>
                   <th></th>
                 </tr>
@@ -257,7 +255,6 @@ export default function FaceEnrollmentsPage() {
               <tbody>
                 {enrollments.map((e) => (
                   <tr key={e.id}>
-                    <td>{e.id}</td>
                     <td style={{ fontWeight: 600 }}>
                       {e.user_name || `User #${e.user_id}`}
                       {e.user_id ? (
@@ -265,9 +262,6 @@ export default function FaceEnrollmentsPage() {
                       ) : null}
                     </td>
                     <td>{e.device_id ?? <span style={{ color: 'var(--text-muted)' }}>Global</span>}</td>
-                    <td>
-                      <span className="badge-device">{e.feature_vector?.length || 0}d</span>
-                    </td>
                     <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                       {new Date(e.created_at).toLocaleString()}
                     </td>
@@ -452,7 +446,7 @@ export default function FaceEnrollmentsPage() {
             </Row>
           </Modal.Body>
           <Modal.Footer>
-            <Button type="button" variant="outline-light" onClick={() => { setShowEnroll(false); resetEnrollForm(); }}>
+            <Button type="button" variant="outline-dark" onClick={() => { setShowEnroll(false); resetEnrollForm(); }}>
               Cancel
             </Button>
             <Button type="submit" disabled={enrollLoading || !enrollFile || !enrollUserId}>
