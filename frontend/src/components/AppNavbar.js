@@ -32,23 +32,25 @@ export default function AppNavbar() {
                 <Nav.Link as={Link} to="/devices" active={isActive('/devices')}>
                   Devices
                 </Nav.Link>
-                <NavDropdown
-                  title="Face AI"
-                  id="face-dropdown"
-                  active={location.pathname.startsWith('/face')}
-                >
-                  {isAdmin && (
+                {isAdmin && (
+                  <NavDropdown
+                    title="Face AI"
+                    id="face-dropdown"
+                    active={location.pathname.startsWith('/face')}
+                  >
                     <NavDropdown.Item as={Link} to="/face/enrollments">
-                      Enrollments
+                      🧑 Enrollments
                     </NavDropdown.Item>
-                  )}
-                  <NavDropdown.Item as={Link} to="/face/recognize" >
-                     Recognize
-                  </NavDropdown.Item>
-                  <NavDropdown.Item as={Link} to="/face/logs" >
-                     Logs
-                  </NavDropdown.Item>
-                </NavDropdown>
+                    <NavDropdown.Item as={Link} to="/face/logs">
+                      📋 Logs
+                    </NavDropdown.Item>
+                  </NavDropdown>
+                )}
+                {!isAdmin && (
+                  <Nav.Link as={Link} to="/face/logs" active={isActive('/face/logs')}>
+                    📋 Face Logs
+                  </Nav.Link>
+                )}
                 {isAdmin && (
                   <Nav.Link as={Link} to="/admin/users" active={isActive('/admin/users')}>
                      Admin
@@ -71,9 +73,6 @@ export default function AppNavbar() {
               </>
             ) : (
               <>
-                <Nav.Link as={Link} to="/face/recognize" active={isActive('/face/recognize')}>
-                  Face Recognition
-                </Nav.Link>
                 <Nav.Link as={Link} to="/login" active={isActive('/login')}>
                   Sign In
                 </Nav.Link>
