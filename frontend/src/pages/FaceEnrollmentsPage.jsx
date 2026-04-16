@@ -23,6 +23,7 @@ export default function FaceEnrollmentsPage() {
   const [cameraLoading, setCameraLoading] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
   const [enrollLoading, setEnrollLoading] = useState(false);
+  const [enrollError, setEnrollError] = useState('');
   const fileInputRef = useRef(null);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -64,7 +65,6 @@ export default function FaceEnrollmentsPage() {
     const playPromise = videoRef.current.play();
     if (playPromise && typeof playPromise.catch === 'function') {
       playPromise.catch(() => {
-        // Autoplay can be blocked in some browsers even with muted playback.
       });
     }
   }, [cameraActive, enrollInputMode]);
@@ -143,15 +143,15 @@ export default function FaceEnrollmentsPage() {
 
   const handleEnroll = async (e) => {
     e.preventDefault();
+    setEnrollError('');
     if (!enrollUserId) {
-      setError('Please select a registered user');
+      setEnrollError('Please select a registered user');
       return;
     }
     if (!enrollFile) {
-      setError('Please select an image file');
+      setEnrollError('Please select an image file');
       return;
     }
-    setError('');
     setEnrollLoading(true);
     try {
       const formData = new FormData();
@@ -170,7 +170,7 @@ export default function FaceEnrollmentsPage() {
       fetchEnrollments();
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
-      setError(err.response?.data?.detail || 'Enrollment failed');
+      setEnrollError(err.response?.data?.detail || 'Enrollment failed');
     } finally {
       setEnrollLoading(false);
     }
@@ -197,6 +197,7 @@ export default function FaceEnrollmentsPage() {
     setEnrollPreview(null);
     setEnrollInputMode('upload');
     setCameraLoading(false);
+    setEnrollError('');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -289,6 +290,11 @@ export default function FaceEnrollmentsPage() {
         </Modal.Header>
         <Form onSubmit={handleEnroll}>
           <Modal.Body>
+            {enrollError && (
+              <Alert variant="danger" dismissible onClose={() => setEnrollError('')}>
+                {enrollError}
+              </Alert>
+            )}
             <Row>
               <Col md={6}>
                 <Form.Group className="mb-3">
