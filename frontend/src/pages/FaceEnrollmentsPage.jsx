@@ -12,11 +12,16 @@ export default function FaceEnrollmentsPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [filterDeviceId, setFilterDeviceId] = useState('');
+  const [showImageModal, setShowImageModal] = useState(false);
+  const [selectedEnrollment, setSelectedEnrollment] = useState(null);
+  const [selectedEnrollmentImageUrl, setSelectedEnrollmentImageUrl] = useState('');
+  const [selectedEnrollmentImageLoading, setSelectedEnrollmentImageLoading] = useState(false);
+  const [selectedEnrollmentImageError, setSelectedEnrollmentImageError] = useState('');
+  const [selectedEnrollmentImageNaturalSize, setSelectedEnrollmentImageNaturalSize] = useState(null);
 
   // Enroll modal
   const [showEnroll, setShowEnroll] = useState(false);
   const [enrollUserId, setEnrollUserId] = useState('');
-  const [enrollDeviceId, setEnrollDeviceId] = useState('');
   const [enrollFile, setEnrollFile] = useState(null);
   const [enrollPreview, setEnrollPreview] = useState(null);
   const [enrollInputMode, setEnrollInputMode] = useState('upload');
@@ -56,6 +61,24 @@ export default function FaceEnrollmentsPage() {
 
   useEffect(() => { fetchEnrollments(); }, [fetchEnrollments]);
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
+
+  // Fetch camera device for enrollment
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await api.get('/face/camera');
+        setCameraDevice(res.data.camera);
+      } catch {
+        setCameraDevice(null);
+      }
+    })();
+  }, []);
+
+  useEffect(() => () => {
+    if (selectedEnrollmentImageUrl) {
+      URL.revokeObjectURL(selectedEnrollmentImageUrl);
+    }
+  }, [selectedEnrollmentImageUrl]);
 
   useEffect(() => {
     if (!cameraActive || enrollInputMode !== 'webcam') return;
@@ -157,7 +180,7 @@ export default function FaceEnrollmentsPage() {
       const formData = new FormData();
       formData.append('image', enrollFile);
       formData.append('user_id', enrollUserId);
-      if (enrollDeviceId) formData.append('device_id', enrollDeviceId);
+      formData.append('device_id', cameraDevice.id);
 
       await api.post('/face/enrollments/image', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -189,10 +212,50 @@ export default function FaceEnrollmentsPage() {
     }
   };
 
+  const openEnrollmentImage = async (enrollment) => {
+    if (!enrollment?.image_path) return;
+    setSelectedEnrollment(enrollment);
+    setSelectedEnrollmentImageError('');
+    setSelectedEnrollmentImageLoading(true);
+    setSelectedEnrollmentImageNaturalSize(null);
+    setShowImageModal(true);
+
+    try {
+      const res = await api.get(`/face/enrollments/${enrollment.id}/image`, { responseType: 'blob' });
+      const objectUrl = URL.createObjectURL(res.data);
+      setSelectedEnrollmentImageUrl((currentUrl) => {
+        if (currentUrl) URL.revokeObjectURL(currentUrl);
+        return objectUrl;
+      });
+    } catch (err) {
+      setSelectedEnrollmentImageError(err.response?.data?.detail || 'Failed to load enrollment image');
+    } finally {
+      setSelectedEnrollmentImageLoading(false);
+    }
+  };
+
+  const closeEnrollmentImageModal = () => {
+    setShowImageModal(false);
+    setSelectedEnrollment(null);
+    setSelectedEnrollmentImageError('');
+    setSelectedEnrollmentImageLoading(false);
+    setSelectedEnrollmentImageNaturalSize(null);
+    setSelectedEnrollmentImageUrl((currentUrl) => {
+      if (currentUrl) URL.revokeObjectURL(currentUrl);
+      return '';
+    });
+  };
+
+  const handleEnrollmentImageLoad = (event) => {
+    setSelectedEnrollmentImageNaturalSize({
+      width: event.currentTarget.naturalWidth,
+      height: event.currentTarget.naturalHeight,
+    });
+  };
+
   const resetEnrollForm = () => {
     stopCamera();
     setEnrollUserId('');
-    setEnrollDeviceId('');
     setEnrollFile(null);
     setEnrollPreview(null);
     setEnrollInputMode('upload');
@@ -318,13 +381,24 @@ export default function FaceEnrollmentsPage() {
                   )}
                 </Form.Group>
                 <Form.Group className="mb-3">
-                  <Form.Label>Device ID <small style={{ color: 'var(--text-muted)' }}>(optional)</small></Form.Label>
-                  <Form.Control
-                    type="number"
-                    placeholder="Scope to a specific device"
-                    value={enrollDeviceId}
-                    onChange={(e) => setEnrollDeviceId(e.target.value)}
-                  />
+                  <Form.Label>Camera Device</Form.Label>
+                  {cameraDevice ? (
+                    <div style={{
+                      background: 'var(--bg-input)', border: '1px solid var(--border-color)',
+                      borderRadius: 'var(--radius-sm)', padding: '0.65rem 1rem',
+                      color: 'var(--accent-green)', fontWeight: 600,
+                    }}>
+                      📷 {cameraDevice.name} ({cameraDevice.id})
+                    </div>
+                  ) : (
+                    <div style={{
+                      background: 'var(--bg-input)', border: '1px solid var(--accent-red)',
+                      borderRadius: 'var(--radius-sm)', padding: '0.65rem 1rem',
+                      color: 'var(--accent-red)',
+                    }}>
+                      No camera device found. Add a camera device first.
+                    </div>
+                  )}
                 </Form.Group>
                 <Form.Group className="mb-3">
                   <Form.Label>Face Photo</Form.Label>
@@ -455,11 +529,91 @@ export default function FaceEnrollmentsPage() {
             <Button type="button" variant="outline-dark" onClick={() => { setShowEnroll(false); resetEnrollForm(); }}>
               Cancel
             </Button>
-            <Button type="submit" disabled={enrollLoading || !enrollFile || !enrollUserId}>
+            <Button type="submit" disabled={enrollLoading || !enrollFile || !enrollUserId || !cameraDevice}>
               {enrollLoading ? <Spinner size="sm" animation="border" /> : 'Enroll Face'}
             </Button>
           </Modal.Footer>
         </Form>
+      </Modal>
+
+      <Modal show={showImageModal} onHide={closeEnrollmentImageModal} centered size="lg">
+        <Modal.Header closeButton>
+          <Modal.Title>
+            {selectedEnrollment ? `Enrollment #${selectedEnrollment.id} Image` : 'Enrollment Image'}
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {selectedEnrollmentImageError ? (
+            <Alert variant="danger" className="mb-0">
+              {selectedEnrollmentImageError}
+            </Alert>
+          ) : selectedEnrollmentImageLoading ? (
+            <div className="text-center py-4">
+              <Spinner animation="border" />
+            </div>
+          ) : selectedEnrollmentImageUrl ? (
+            <div style={{ position: 'relative', width: '100%' }}>
+              <img
+                src={selectedEnrollmentImageUrl}
+                alt={selectedEnrollment ? `Enrollment ${selectedEnrollment.id}` : 'Enrollment'}
+                onLoad={handleEnrollmentImageLoad}
+                style={{
+                  width: '100%',
+                  height: 'auto',
+                  display: 'block',
+                  borderRadius: 'var(--radius)',
+                  border: '1px solid var(--border-color)',
+                }}
+              />
+              {selectedEnrollment?.bbox && selectedEnrollmentImageNaturalSize ? (() => {
+                const [x1, y1, x2, y2] = selectedEnrollment.bbox;
+                const { width, height } = selectedEnrollmentImageNaturalSize;
+                const left = (x1 / width) * 100;
+                const top = (y1 / height) * 100;
+                const boxWidth = ((x2 - x1) / width) * 100;
+                const boxHeight = ((y2 - y1) / height) * 100;
+                return (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: `${left}%`,
+                      top: `${top}%`,
+                      width: `${boxWidth}%`,
+                      height: `${boxHeight}%`,
+                      border: '2px solid #ff5b5b',
+                      boxShadow: '0 0 0 1px rgba(0,0,0,0.15)',
+                      pointerEvents: 'none',
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: '-1.7rem',
+                        left: 0,
+                        background: '#ff5b5b',
+                        color: '#fff',
+                        fontSize: '0.75rem',
+                        fontWeight: 700,
+                        padding: '0.2rem 0.45rem',
+                        borderRadius: '0.35rem',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      bbox
+                    </div>
+                  </div>
+                );
+              })() : null}
+            </div>
+          ) : (
+            <div className="text-center py-4" style={{ color: 'var(--text-muted)' }}>
+              No image available.
+            </div>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="outline-light" onClick={closeEnrollmentImageModal}>Close</Button>
+        </Modal.Footer>
       </Modal>
     </Container>
   );

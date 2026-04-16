@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.security import create_access_token, hash_secret, verify_secret
+from app.db.db_utils import reset_sequence_to_min_gap
 from app.db.session import get_db
 from app.models.invitation_key import InvitationKey
 from app.models.user import User
@@ -92,6 +93,8 @@ async def register(payload: RegistrationRequest, db: AsyncSession = Depends(get_
         role=role,
         is_active=True,
     )
+    # Keep sequence aligned with current gaps right before INSERT.
+    await reset_sequence_to_min_gap(db, "users", "users_id_seq")
     db.add(user)
     await db.commit()
     await db.refresh(user)
