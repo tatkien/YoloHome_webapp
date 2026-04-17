@@ -207,7 +207,7 @@ export default function DevicesPage() {
                   </div>
 
                   {/* Device Logs accordion */}
-                  <Button variant="outline-light" size="sm" className="w-100 mb-2"
+                  <Button variant="outline-dark" size="sm" className="w-100 mb-2"
                     onClick={() => fetchLogs(d.id)}>
                     {expandedLogs[d.id] ? '▲ Hide Logs' : '▼ Show Logs'}
                   </Button>
@@ -331,7 +331,7 @@ export default function DevicesPage() {
             </Form.Group>
           </Modal.Body>
           <Modal.Footer>
-            <Button variant="outline-light" onClick={closeCreateModal}>Cancel</Button>
+            <Button variant="outline-dark" onClick={closeCreateModal}>Cancel</Button>
             <Button type="submit" disabled={createLoading}>
               {createLoading ? <Spinner size="sm" animation="border" /> : 'Create Device'}
             </Button>

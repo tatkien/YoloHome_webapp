@@ -25,6 +25,7 @@ export default function FaceEnrollmentsPage() {
   const [enrollFile, setEnrollFile] = useState(null);
   const [enrollPreview, setEnrollPreview] = useState(null);
   const [enrollInputMode, setEnrollInputMode] = useState('upload');
+  const [cameraDevice, setCameraDevice] = useState(null);
   const [cameraLoading, setCameraLoading] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
   const [enrollLoading, setEnrollLoading] = useState(false);
@@ -330,13 +331,23 @@ export default function FaceEnrollmentsPage() {
                       {new Date(e.created_at).toLocaleString()}
                     </td>
                     <td>
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        onClick={() => handleDelete(e.id, e.user_name || `User #${e.user_id}`)}
-                      >
-                        Delete
-                      </Button>
+                      <div className="d-flex gap-2 justify-content-end">
+                        <Button
+                          variant="outline-dark"
+                          size="sm"
+                          onClick={() => openEnrollmentImage(e)}
+                          disabled={!e.image_path}
+                        >
+                          Preview
+                        </Button>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={() => handleDelete(e.id, e.user_name || `User #${e.user_id}`)}
+                        >
+                          Delete
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
