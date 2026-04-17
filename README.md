@@ -220,11 +220,6 @@ npm test
 | GET | `/api/v1/feeds/{id}/values` | Owner | Read feed value history |
 | POST | `/api/v1/feeds/{id}/values` | Owner | Publish a value as a user |
 | POST | `/api/v1/feeds/{id}/ingest` | Device Key | Publish a value from the physical kit (`X-Device-Key`) |
-| **Dashboards** |
-| GET | `/api/v1/dashboards/` | JWT | List dashboards owned by the current user |
-| POST | `/api/v1/dashboards/` | JWT | Create a dashboard |
-| GET | `/api/v1/dashboards/{id}` | JWT | Read a dashboard with its widgets |
-| POST | `/api/v1/dashboards/{id}/widgets` | JWT | Add a widget to a dashboard |
 | **Face Recognition** |
 | GET | `/api/v1/face/enrollments` | JWT | List enrolled faces |
 | POST | `/api/v1/face/enrollments/image` | Admin | Upload one image and enroll face for a registered user_id |

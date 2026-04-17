@@ -8,9 +8,9 @@ from app.db.db_utils import reset_sequence_to_min_gap
 from app.models.device import Device, DeviceTypeEnum
 from app.models.user import User
 
-from app.schemas.device import DeviceRead, DeviceUpdate, DeviceCreate, DeviceLogRead, DeviceControlRequest
+from app.schemas.device import DeviceRead, DeviceUpdate, DeviceCreate, DeviceLogRead, DeviceControlRequest, SensorDataRead
 from app.schemas.schedule import DeviceScheduleCreate, DeviceScheduleUpdate, DeviceScheduleRead
-from app.models.device import HardwareNode, DeviceLog
+from app.models.device import HardwareNode, DeviceLog, SensorData
 from app.models.device_schedule import DeviceSchedule
 from app.schemas.hardware import HardwareNodeRead
 from app.realtime.websocket_manager import realtime_manager
@@ -424,6 +424,27 @@ async def get_device_history(
         sa.select(DeviceLog)
         .where(DeviceLog.device_id == device_id)
         .order_by(DeviceLog.created_at.desc())
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+@router.get("/{device_id}/sensor-data", response_model=List[SensorDataRead])
+async def get_sensor_data(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    limit: int = 20,
+):
+    """Get recent sensor data for a specific device."""
+    # Ensure device exists
+    await _get_device_or_404(db, device_id)
+
+    # Query sensor data ordered by newest first
+    stmt = (
+        sa.select(SensorData)
+        .where(SensorData.device_id == device_id)
+        .order_by(SensorData.created_at.desc())
         .limit(limit)
     )
     result = await db.execute(stmt)

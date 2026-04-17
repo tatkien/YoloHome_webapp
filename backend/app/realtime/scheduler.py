@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 async def run_device_schedule_loop(stop_event: asyncio.Event) -> None:
-    """Background loop that checks schedules every 1 minute."""
+    """Background loop that checks schedules every 30 seconds."""
     while not stop_event.is_set():
         try:
             await _run_schedule_tick()
