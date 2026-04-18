@@ -46,6 +46,16 @@ class Settings(BaseSettings):
     MQTT_PORT: int = 1883
     MQTT_KEEPALIVE: int = 60
 
+    # --- VOICE CONTROL CONFIGURATION ---
+    VOICE_ENABLED: bool = True
+    VOICE_ACCESS_KEY: str | None = None
+    VOICE_KEYWORD_PATH: str = "/models/hey_yolo.ppn"
+    VOICE_WHISPER_MODEL: str = "base"
+    VOICE_SAMPLERATE: int = 16000
+    VOICE_VAD_AGGRESSIVENESS: int = 2
+    VOICE_SILENCE_LIMIT: int = 8
+    VOICE_DEVICE_INDEX: int | None = None
+
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

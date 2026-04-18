@@ -14,10 +14,15 @@ pydantic-settings==2.13.1
 PyJWT==2.12.1
 python-dotenv==1.2.2
 python-multipart==0.0.22
+requests==2.32.3
 SQLAlchemy==2.0.48
 uvicorn==0.42.0
 watchfiles==1.1.1
 websockets==16.0
+pvporcupine==3.0.5
+sounddevice==0.5.2
+faster-whisper==1.2.0
+webrtcvad-wheels==2.0.14
 
 # Test dependencies
 pytest==9.0.2

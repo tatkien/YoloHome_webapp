@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.service.mqtt import mqtt_service
+from app.service.voice_listener import run_voice_listener
 from app.core.config import settings
 from app.core.face_service import get_face_service
 from app.realtime.scheduler import run_device_schedule_loop
@@ -24,11 +25,13 @@ async def lifespan(app: FastAPI):
     # Start MQTT and scheduler in parallel
     mqtt_task = asyncio.create_task(mqtt_service.connect_and_subscribe())
     schedule_task = asyncio.create_task(run_device_schedule_loop(stop_event))
+    voice_task = asyncio.create_task(run_voice_listener(stop_event))
     try:
         yield
     finally:
         print("Shutting down server, cleaning up resources...")
         stop_event.set()
+        await voice_task
         await schedule_task
         mqtt_task.cancel()
         try:
