@@ -36,6 +36,18 @@ async def _get_device_or_404(db: AsyncSession, device_id: str) -> Device:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Device not found")
     return device
 
+async def _get_sensor_or_404(db: AsyncSession, sensor_id: str) -> Device:
+    """Find a sensor device by UUID or raise 404."""
+    result = await db.execute(
+        sa.select(Device).where(
+            Device.id == sensor_id,
+            Device.type.in_([DeviceTypeEnum.TEMP_SENSOR, DeviceTypeEnum.HUMIDITY_SENSOR]),
+        )
+    )
+    sensor = result.scalar_one_or_none()
+    if not sensor:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Sensor not found")
+    return sensor
 
 async def _validate_pin_assignment(
     db: AsyncSession, hardware_id: str, pin: str, device_type: DeviceTypeEnum
@@ -438,7 +450,7 @@ async def get_sensor_data(
 ):
     """Get recent sensor data for a specific device."""
     # Ensure device exists
-    await _get_device_or_404(db, device_id)
+    await _get_sensor_or_404(db, device_id)
 
     # Query sensor data ordered by newest first
     stmt = (
