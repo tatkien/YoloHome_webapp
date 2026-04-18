@@ -1,15 +1,16 @@
-version: "3.9"
-
 services:
   db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg17
     restart: unless-stopped
+    env_file:
+      - ./.env
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: yolohome
+      TZ: Asia/Ho_Chi_Minh
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_local}
+      POSTGRES_DB: ${POSTGRES_DB:-yolohome}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -21,10 +22,15 @@ services:
   backend:
     build: ./backend
     restart: unless-stopped
+    env_file:
+      - ./.env
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:password@db:5432/yolohome
-      SECRET_KEY: changeme
-      DEBUG: "true"
+      TZ: Asia/Ho_Chi_Minh
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:change_me_local@db:5432/yolohome}
+      MQTT_BROKER_URL: ${MQTT_BROKER_URL:-mqtt}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+      SECRET_KEY: ${SECRET_KEY:-change_me_local}
+      DEBUG: ${DEBUG:-false}
     ports:
       - "8000:8000"
     depends_on:
@@ -32,12 +38,15 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+      - ./models:/models:ro
 
   frontend:
     build:
       context: ./frontend
       target: build
     restart: unless-stopped
+    env_file:
+      - ./.env
     environment:
       REACT_APP_API_URL: http://localhost:8000
     ports:
@@ -48,6 +57,18 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    
+  mqtt:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log  
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
 
 volumes:
   postgres_data:
+  mosquitto_data:
+  mosquitto_log:
