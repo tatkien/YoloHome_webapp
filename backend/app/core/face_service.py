@@ -155,7 +155,14 @@ class FaceService:
         scores = np.array([d.score for d in detections])
         indices = self._nms(bboxes, scores, nms_threshold)
 
-        return [detections[i] for i in indices]
+        kept_detections = [detections[i] for i in indices]
+        # Sort descending by bounding box area (largest face first)
+        kept_detections.sort(
+            key=lambda d: (d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1]),
+            reverse=True
+        )
+
+        return kept_detections
 
     def _parse_retinaface_outputs(
         self,
