@@ -1,55 +1,52 @@
 import asyncio
+import base64
 import logging
+import os
 import re
-import threading
-from collections import deque
-from pathlib import Path
-from typing import Optional
+import tempfile
+from dataclasses import dataclass
 
-import numpy as np
 import sqlalchemy as sa
 
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.device import Device, DeviceTypeEnum
+from app.realtime.websocket_manager import realtime_manager
 from app.schemas.device import DeviceControlRequest
 from app.service.history import add_history_record
 from app.service.mqtt import mqtt_service
 
 logger = logging.getLogger(__name__)
 
+VOICE_PROCESSING_TIMEOUT_SECONDS = 3.0
 
-class VoiceCommandListener:
-    def __init__(self, loop: asyncio.AbstractEventLoop):
+
+@dataclass
+class VoiceSessionState:
+    active: bool = False
+    awakened: bool = False
+    processing: bool = False
+
+
+class VoiceWebSocketProcessor:
+    def __init__(self):
         try:
-            import webrtcvad
             from faster_whisper import WhisperModel
-            from pvporcupine import create as create_porcupine
         except ModuleNotFoundError as exc:
             raise RuntimeError(
-                "Voice dependencies are not fully installed. "
-                "Required: pvporcupine, faster-whisper, webrtcvad-wheels, requests."
+                "Voice dependencies are not fully installed. Required: faster-whisper, requests."
             ) from exc
 
-        self.loop = loop
-        self.mode = "WAIT"
-        self.audio_buffer: deque[int] = deque()
-        self.silence_counter = 0
-
-        self.porcupine = create_porcupine(
-            access_key=settings.VOICE_ACCESS_KEY,
-            keywords=["hey google"],
-        )
         self.model = WhisperModel(
             settings.VOICE_WHISPER_MODEL,
             device="cpu",
             compute_type="int8",
         )
-        self.vad = webrtcvad.Vad(settings.VOICE_VAD_AGGRESSIVENESS)
-
-        self.samplerate = settings.VOICE_SAMPLERATE
-        self.porcupine_frame = self.porcupine.frame_length
-        self.vad_frame = int(self.samplerate * 30 / 1000)
+        self.wake_phrases = [
+            p.strip().lower() for p in settings.VOICE_WAKE_PHRASES.split(",") if p.strip()
+        ] or ["hey yolo", "hi yolo"]
+        self.wake_prompt = "hey yolo hi yolo wake word"
+        self.sessions: dict[int, VoiceSessionState] = {}
 
     @staticmethod
     def clean_text(text: str) -> str:
@@ -59,7 +56,7 @@ class VoiceCommandListener:
         return text
 
     @staticmethod
-    def detect_intent(text: str) -> Optional[str]:
+    def detect_intent(text: str) -> str | None:
         if any(x in text for x in ["fan on", "turn on fan", "turn fan on"]):
             return "FAN_ON"
         if any(x in text for x in ["fan off", "turn off fan", "turn fan off"]):
@@ -74,7 +71,29 @@ class VoiceCommandListener:
     def is_exit_command(text: str) -> bool:
         return any(x in text for x in ["goodbye", "good bye"])
 
-    async def _find_default_device(self, device_type: DeviceTypeEnum) -> Optional[Device]:
+    async def start_session(self, user_id: int) -> None:
+        state = self.sessions.get(user_id) or VoiceSessionState()
+        state.active = True
+        state.awakened = False
+        state.processing = False
+        self.sessions[user_id] = state
+        await realtime_manager.send_to_user(user_id, {
+            "event": "voice_status",
+            "data": {"status": "waiting_wake_phrase"},
+        })
+
+    async def stop_session(self, user_id: int) -> None:
+        state = self.sessions.get(user_id)
+        if state:
+            state.active = False
+            state.awakened = False
+            state.processing = False
+        await realtime_manager.send_to_user(user_id, {
+            "event": "voice_status",
+            "data": {"status": "stopped"},
+        })
+
+    async def _find_default_device(self, device_type: DeviceTypeEnum) -> Device | None:
         async with AsyncSessionLocal() as db:
             stmt = (
                 sa.select(Device)
@@ -85,7 +104,7 @@ class VoiceCommandListener:
             result = await db.execute(stmt)
             return result.scalars().first()
 
-    async def _execute_intent(self, intent: str, spoken_text: str) -> None:
+    async def _execute_intent(self, user_id: int, intent: str, spoken_text: str) -> None:
         if intent in ("FAN_ON", "FAN_OFF"):
             target_type = DeviceTypeEnum.FAN
             is_on = intent == "FAN_ON"
@@ -93,16 +112,14 @@ class VoiceCommandListener:
             target_type = DeviceTypeEnum.LIGHT
             is_on = intent == "LIGHT_ON"
         else:
-            logger.info("Voice intent not supported: %s", intent)
             return
 
         device = await self._find_default_device(target_type)
-        if not device:
-            logger.warning("No %s device found for voice command", target_type.value)
-            return
-
-        if not device.hardware_id or not device.pin:
-            logger.warning("Device %s does not have hardware linkage", device.id)
+        if not device or not device.hardware_id or not device.pin:
+            await realtime_manager.send_to_user(user_id, {
+                "event": "voice_error",
+                "data": {"message": f"No available {target_type.value} device to control."},
+            })
             return
 
         payload = DeviceControlRequest(is_on=is_on, value=1 if is_on else 0)
@@ -116,138 +133,185 @@ class VoiceCommandListener:
             device_id=device.id,
             device_name=device.name,
             action=f"Voice command {intent} (text='{spoken_text}')",
-            actor="system",
+            actor=f"user:{user_id}",
             source="Voice Command",
         )
 
-        logger.info(
-            "Voice command queued: %s -> device=%s hardware=%s pin=%s",
-            intent,
-            device.id,
-            device.hardware_id,
-            device.pin,
-        )
+        await realtime_manager.send_to_user(user_id, {
+            "event": "voice_intent",
+            "data": {"intent": intent, "text": spoken_text},
+        })
 
-    def _process_command(self) -> None:
-        if not self.audio_buffer:
-            return
+    async def process_chunk(self, user_id: int, audio_base64: str, mime_type: str | None = None) -> None:
+        state = self.sessions.get(user_id)
+        if not state or not state.active:
+            logger.info("[VOICE][user:%s] Chunk ignored: session inactive", user_id)
+        elif state.processing:
+            logger.info("[VOICE][user:%s] Chunk ignored: processing in progress", user_id)
+        else:
+            logger.info("[VOICE][user:%s] Recording...", user_id)
 
-        audio = np.array(self.audio_buffer, dtype=np.float32) / 32768.0
-        segments, _ = self.model.transcribe(
-            audio,
-            initial_prompt="fan on fan off light on light off",
-        )
-        raw_text = " ".join(seg.text for seg in segments)
-        text = self.clean_text(raw_text)
+            idle_status = "listening_command" if state.awakened else "waiting_wake_phrase"
+            can_transcribe = True
+            chunk_bytes = b""
+            raw_text = ""
+            text = ""
 
-        if not text:
-            logger.info("Voice transcript empty")
-            return
+            try:
+                chunk_bytes = base64.b64decode(audio_base64)
+            except Exception:
+                can_transcribe = False
+                await realtime_manager.send_to_user(user_id, {
+                    "event": "voice_error",
+                    "data": {"message": "Invalid audio chunk payload."},
+                })
 
-        logger.info("Voice transcript: %s", text)
+            if can_transcribe and len(chunk_bytes) < 1024:
+                can_transcribe = False
+                logger.info("[VOICE][user:%s] Chunk ignored: too small (%s bytes)", user_id, len(chunk_bytes))
 
-        if self.is_exit_command(text):
-            self.mode = "WAIT"
-            logger.info("Voice listener switched to WAIT mode")
-            return
+            if can_transcribe:
+                state.processing = True
+                try:
+                    await realtime_manager.send_to_user(user_id, {
+                        "event": "voice_status",
+                        "data": {"status": "processing"},
+                    })
+                    await realtime_manager.send_to_user(user_id, {
+                        "event": "voice_log",
+                        "data": {"message": "Da nhan duoc voice, dang xu ly..."},
+                    })
 
-        intent = self.detect_intent(text)
-        if not intent:
-            logger.info("No known intent detected from transcript")
-            return
+                    try:
+                        transcribe_prompt = self.wake_prompt if not state.awakened else settings.VOICE_INITIAL_PROMPT
+                        raw_text, text = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                self._transcribe_bytes_sync,
+                                chunk_bytes,
+                                mime_type or "audio/webm",
+                                transcribe_prompt,
+                            ),
+                            timeout=VOICE_PROCESSING_TIMEOUT_SECONDS,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "[VOICE][user:%s] Processing timeout after %.1fs. Skip chunk.",
+                            user_id,
+                            VOICE_PROCESSING_TIMEOUT_SECONDS,
+                        )
+                        await realtime_manager.send_to_user(user_id, {
+                            "event": "voice_log",
+                            "data": {"message": "Xu ly qua 2 giay. Bo qua chunk va tiep tuc nghe."},
+                        })
+                        await realtime_manager.send_to_user(user_id, {
+                            "event": "voice_status",
+                            "data": {"status": idle_status},
+                        })
+                        return
+                    except Exception as exc:
+                        # Some chunks are not decodable yet; wait for next chunk instead of breaking the flow.
+                        logger.debug("Voice chunk not decodable yet: %s", exc)
+                        text = ""
 
-        future = asyncio.run_coroutine_threadsafe(self._execute_intent(intent, text), self.loop)
+                    raw_text = (raw_text or "").strip()
+                    if raw_text:
+                        logger.info("[VOICE][user:%s] RAW: %s", user_id, raw_text)
+                    logger.info("[VOICE][user:%s] CLEAN: %s", user_id, text or "-")
+
+                    if text:
+                        await realtime_manager.send_to_user(user_id, {
+                            "event": "voice_transcript",
+                            "data": {"text": text},
+                        })
+
+                        if not state.awakened:
+                            if any(phrase in text for phrase in self.wake_phrases):
+                                state.awakened = True
+                                logger.info("[VOICE][user:%s] >>> START LISTENING", user_id)
+                                await realtime_manager.send_to_user(user_id, {
+                                    "event": "voice_log",
+                                    "data": {"message": "Wake word hop le. Chuyen sang Listening Command."},
+                                })
+                                await realtime_manager.send_to_user(user_id, {
+                                    "event": "voice_status",
+                                    "data": {"status": "listening_command"},
+                                })
+                            else:
+                                await realtime_manager.send_to_user(user_id, {
+                                    "event": "voice_log",
+                                    "data": {"message": "Khong khop wake word. Quay ve Waiting hey yolo."},
+                                })
+                                await realtime_manager.send_to_user(user_id, {
+                                    "event": "voice_status",
+                                    "data": {"status": "waiting_wake_phrase"},
+                                })
+                        else:
+                            if self.is_exit_command(text):
+                                state.awakened = False
+                                logger.info("[VOICE][user:%s] >>> STOP LISTENING", user_id)
+                                await realtime_manager.send_to_user(user_id, {
+                                    "event": "voice_log",
+                                    "data": {"message": "Nhan goodbye. Quay ve Waiting hey yolo."},
+                                })
+                                await realtime_manager.send_to_user(user_id, {
+                                    "event": "voice_status",
+                                    "data": {"status": "waiting_wake_phrase"},
+                                })
+                            else:
+                                intent = self.detect_intent(text)
+                                if intent:
+                                    logger.info("[VOICE][user:%s] >>> INTENT: %s", user_id, intent)
+                                    await self._execute_intent(user_id, intent, text)
+                                    await realtime_manager.send_to_user(user_id, {
+                                        "event": "voice_log",
+                                        "data": {"message": f"Da thuc thi lenh: {intent}"},
+                                    })
+                                else:
+                                    await realtime_manager.send_to_user(user_id, {
+                                        "event": "voice_log",
+                                        "data": {"message": "Khong nhan ra lenh. Van o Listening Command."},
+                                    })
+
+                                await realtime_manager.send_to_user(user_id, {
+                                    "event": "voice_status",
+                                    "data": {"status": "listening_command"},
+                                })
+                    else:
+                        await realtime_manager.send_to_user(user_id, {
+                            "event": "voice_status",
+                            "data": {"status": idle_status},
+                        })
+                finally:
+                    state.processing = False
+
+    def _transcribe_bytes_sync(self, chunk_bytes: bytes, mime_type: str, prompt: str) -> tuple[str, str]:
+        suffix = ".webm" if "webm" in mime_type else ".wav"
+        temp_path = None
         try:
-            future.result(timeout=10)
-        except Exception as exc:
-            logger.exception("Voice intent execution failed: %s", exc)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
+                f.write(chunk_bytes)
+                temp_path = f.name
 
-    def run(self, stop_flag: threading.Event) -> None:
-        try:
-            import sounddevice as sd
-        except (ImportError, OSError) as exc:
-            raise RuntimeError(
-                "sounddevice/PortAudio is not available. Install PortAudio in the runtime environment."
-            ) from exc
-
-        try:
-            devices = sd.query_devices()
-        except Exception as exc:
-            raise RuntimeError(f"Unable to query audio devices: {exc}") from exc
-
-        input_device_indexes = [
-            idx for idx, dev in enumerate(devices) if dev.get("max_input_channels", 0) > 0
-        ]
-        if not input_device_indexes:
-            raise RuntimeError("No input audio device available in current runtime")
-
-        selected_device = settings.VOICE_DEVICE_INDEX
-        if selected_device is None:
-            selected_device = input_device_indexes[0]
-
-        if selected_device not in input_device_indexes:
-            raise RuntimeError(
-                f"Selected VOICE_DEVICE_INDEX={selected_device} is invalid. "
-                f"Available input device indexes: {input_device_indexes}"
+            segments, _ = self.model.transcribe(
+                temp_path,
+                initial_prompt=prompt,
             )
+            raw = " ".join(seg.text for seg in segments)
+            cleaned = self.clean_text(raw)
+            return raw, cleaned
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
 
-        logger.info(
-            "Voice listener started on input device index %s and waiting for wake word",
-            selected_device,
-        )
 
-        def audio_callback(indata, frames, callback_time, status):
-            del frames, callback_time
-            if status:
-                logger.warning("Audio callback status: %s", status)
+_voice_ws_processor: VoiceWebSocketProcessor | None = None
 
-            pcm = np.frombuffer(indata, dtype=np.int16)
 
-            if self.mode == "WAIT":
-                if len(pcm) == self.porcupine_frame:
-                    result = self.porcupine.process(pcm)
-                    if result >= 0:
-                        self.mode = "LISTEN"
-                        self.audio_buffer.clear()
-                        self.silence_counter = 0
-                        logger.info("Wake word detected, entering LISTEN mode")
-                return
-
-            for i in range(0, len(pcm), self.vad_frame):
-                frame = pcm[i : i + self.vad_frame]
-                if len(frame) < self.vad_frame:
-                    continue
-
-                is_speech = self.vad.is_speech(frame.tobytes(), self.samplerate)
-                if is_speech:
-                    self.audio_buffer.extend(frame)
-                    self.silence_counter = 0
-                else:
-                    self.silence_counter += 1
-
-                if self.silence_counter > settings.VOICE_SILENCE_LIMIT and self.audio_buffer:
-                    self._process_command()
-                    self.audio_buffer.clear()
-                    self.silence_counter = 0
-                    break
-
-        try:
-            with sd.RawInputStream(
-                device=selected_device,
-                samplerate=self.porcupine.sample_rate,
-                blocksize=self.porcupine_frame,
-                dtype="int16",
-                channels=1,
-                callback=audio_callback,
-            ):
-                while not stop_flag.is_set():
-                    stop_flag.wait(0.1)
-        except Exception as exc:
-            raise RuntimeError(f"Unable to open audio input stream: {exc}") from exc
-
-    def close(self) -> None:
-        if self.porcupine:
-            self.porcupine.delete()
+def get_voice_ws_processor() -> VoiceWebSocketProcessor:
+    global _voice_ws_processor
+    if _voice_ws_processor is None:
+        _voice_ws_processor = VoiceWebSocketProcessor()
+    return _voice_ws_processor
 
 
 async def run_voice_listener(stop_event: asyncio.Event) -> None:
@@ -255,66 +319,5 @@ async def run_voice_listener(stop_event: asyncio.Event) -> None:
         logger.info("Voice listener disabled by VOICE_ENABLED")
         return
 
-    if not settings.VOICE_ACCESS_KEY:
-        logger.warning("Voice listener disabled: VOICE_ACCESS_KEY is missing")
-        return
-
-    keyword_path = Path(settings.VOICE_KEYWORD_PATH)
-    if not keyword_path.exists():
-        logger.warning("Voice listener disabled: keyword file not found at %s", keyword_path)
-        return
-
-    loop = asyncio.get_running_loop()
-
-    while not stop_event.is_set():
-        stop_flag = threading.Event()
-
-        async def bridge_stop() -> None:
-            await stop_event.wait()
-            stop_flag.set()
-
-        bridge_task = asyncio.create_task(bridge_stop())
-        listener: Optional[VoiceCommandListener] = None
-
-        try:
-            listener = VoiceCommandListener(loop)
-            await asyncio.to_thread(listener.run, stop_flag)
-        except Exception as exc:
-            message = str(exc)
-            if "ActivationLimitError" in message or "PorcupineActivationLimitError" in message:
-                logger.error(
-                    "Voice listener disabled: Picovoice activation limit reached for current access key. "
-                    "Use a valid key with available quota or disable voice temporarily."
-                )
-                return
-            if (
-                "No input audio device available" in message
-                or "Unable to open audio input stream" in message
-                or "Unable to query audio devices" in message
-                or "Error querying device" in message
-            ):
-                logger.error("Voice listener disabled: %s", message)
-                return
-            # Porcupine keyword files are platform-specific. If a mismatched .ppn is used
-            # (e.g., Windows keyword in Linux container), disable voice worker gracefully.
-            if "belongs to a different platform" in message or "Loading keyword file" in message:
-                logger.error(
-                    "Voice listener disabled: keyword file at %s is not compatible with this platform. "
-                    "Provide a Linux-compatible .ppn file and set VOICE_KEYWORD_PATH accordingly.",
-                    settings.VOICE_KEYWORD_PATH,
-                )
-                return
-            logger.exception("Voice listener crashed. Retrying in 3s: %s", exc)
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=3)
-            except TimeoutError:
-                pass
-        finally:
-            stop_flag.set()
-            if listener:
-                listener.close()
-            bridge_task.cancel()
-            try:
-                await bridge_task
-            except asyncio.CancelledError:
-                pass
+    logger.info("Voice listener initialized in websocket mode")
+    await stop_event.wait()

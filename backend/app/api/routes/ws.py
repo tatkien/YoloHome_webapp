@@ -2,13 +2,16 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, WebSocketException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 import asyncio
+import logging
 
 from app.core.security import decode_access_token
 from app.db.session import AsyncSessionLocal
 from app.models.user import User
 from app.realtime.websocket_manager import realtime_manager
+from app.service.voice_listener import get_voice_ws_processor
 
 router = APIRouter(tags=["ws"])
+logger = logging.getLogger(__name__)
 
 WS_IDLE_TIMEOUT_SECONDS = 60
 
@@ -56,6 +59,45 @@ async def user_global_stream(
             # Handle ping/pong
             if data.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
+                continue
+
+            if data.get("type") == "voice_start":
+                logger.info("[VOICE][user:%s] WS voice_start", user.id)
+                try:
+                    await get_voice_ws_processor().start_session(user.id)
+                except RuntimeError as exc:
+                    await realtime_manager.send_to_user(user.id, {
+                        "event": "voice_error",
+                        "data": {"message": str(exc)},
+                    })
+                continue
+
+            if data.get("type") == "voice_stop":
+                logger.info("[VOICE][user:%s] WS voice_stop", user.id)
+                try:
+                    await get_voice_ws_processor().stop_session(user.id)
+                except RuntimeError:
+                    pass
+                continue
+
+            if data.get("type") == "voice_chunk":
+                logger.info("[VOICE][user:%s] WS voice_chunk", user.id)
+                audio_base64 = data.get("audio_base64")
+                mime_type = data.get("mime_type")
+                if not audio_base64:
+                    await realtime_manager.send_to_user(user.id, {
+                        "event": "voice_error",
+                        "data": {"message": "Missing audio chunk data."},
+                    })
+                    continue
+                try:
+                    await get_voice_ws_processor().process_chunk(user.id, audio_base64, mime_type)
+                except RuntimeError as exc:
+                    await realtime_manager.send_to_user(user.id, {
+                        "event": "voice_error",
+                        "data": {"message": str(exc)},
+                    })
+                continue
 
     except asyncio.TimeoutError:
         # Client didn't send anything for 60 seconds
@@ -63,4 +105,8 @@ async def user_global_stream(
     except WebSocketDisconnect:
         pass
     finally:
+        try:
+            await get_voice_ws_processor().stop_session(user.id)
+        except RuntimeError:
+            pass
         realtime_manager.disconnect_user(user.id, websocket)
