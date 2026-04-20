@@ -70,6 +70,7 @@ class DeviceHandler:
                 f"for pin {data.pin}: {data.status}"
             )
             return
+        
         async with AsyncSessionLocal() as session:
             session: AsyncSession
 

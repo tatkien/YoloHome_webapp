@@ -112,7 +112,6 @@ async def _get_camera_or_404(db: AsyncSession, device_id: str) -> Device:
 
 @router.get("/camera", summary="Get currently available camera device")
 async def get_camera_device(
-    _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Returns the first camera device if one exists, or null."""
