@@ -229,6 +229,16 @@ async def list_devices(
     result = await db.execute(sa.select(Device).order_by(Device.created_at.desc()))
     return result.scalars().all()
 
+@router.get("/get-camera-devices", response_model=List[DeviceRead])
+async def get_camera_devices(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Get all camera devices."""
+    result = await db.execute(
+        sa.select(Device).where(Device.type == DeviceTypeEnum.CAMERA)
+    )
+    return result.scalars().all()
 
 @router.get("/{device_id}", response_model=DeviceRead)
 async def read_device(

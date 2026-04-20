@@ -70,7 +70,9 @@ class DeviceHandler:
                 f"for pin {data.pin}: {data.status}"
             )
             return
-        
+
+        print(f"[Handler] Processing state for {hardware_id} pin {data.pin}")
+
         async with AsyncSessionLocal() as session:
             session: AsyncSession
 
@@ -96,6 +98,8 @@ class DeviceHandler:
                             f"[Handler] Synced device {data.pin} on hardware {hardware_id}"
                         )
 
+                        device_id_to_broadcast = device.id
+
                         msg = f"Updated: {'ON' if new_is_on else 'OFF'}, Value: {new_value}"
                         await add_history_record(
                             device.id,
@@ -104,8 +108,8 @@ class DeviceHandler:
                             "system",
                             "Hardware",
                         )
-
-                        device_id_to_broadcast = device.id
+                    else:
+                        print(f"[Handler] State unchanged for device {data.pin}")
                 else:
                     # Auto-create servo lock device
                     if "servo" in data.pin.lower():
