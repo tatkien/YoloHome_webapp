@@ -4,6 +4,10 @@ import {
 } from 'react-bootstrap';
 import api from '../services/api';
 
+const SCHEDULABLE_DEVICE_TYPES = new Set(['light', 'fan']);
+
+const isSchedulableDevice = (device) => SCHEDULABLE_DEVICE_TYPES.has(device?.type);
+
 export default function DeviceSchedulesPage() {
   const [schedules, setSchedules] = useState([]);
   const [devices, setDevices] = useState([]); 
@@ -30,8 +34,10 @@ export default function DeviceSchedulesPage() {
       const fetchedDevices = devRes.data;
       setDevices(fetchedDevices);
 
+      const schedulableDevices = fetchedDevices.filter(isSchedulableDevice);
+
       let allSchedules = [];
-      for (const device of fetchedDevices) {
+      for (const device of schedulableDevices) {
         try {
           const schRes = await api.get(`/devices/${device.id}/schedules`);
           allSchedules = [...allSchedules, ...schRes.data];
@@ -43,8 +49,16 @@ export default function DeviceSchedulesPage() {
       allSchedules.sort((a, b) => a.time_of_day.localeCompare(b.time_of_day));
       setSchedules(allSchedules);
 
-      if (fetchedDevices.length > 0 && !newSchedule.device_id) {
-        setNewSchedule(prev => ({ ...prev, device_id: fetchedDevices[0].id }));
+      if (schedulableDevices.length > 0) {
+        const currentDeviceStillValid = schedulableDevices.some(
+          (device) => device.id === newSchedule.device_id,
+        );
+
+        if (!currentDeviceStillValid) {
+          setNewSchedule((prev) => ({ ...prev, device_id: schedulableDevices[0].id }));
+        }
+      } else if (newSchedule.device_id) {
+        setNewSchedule((prev) => ({ ...prev, device_id: '' }));
       }
 
     } catch (err) {
@@ -123,6 +137,8 @@ export default function DeviceSchedulesPage() {
     return device && device.device_type ? device.device_type : 'unknown';
   };
 
+  const schedulableDevices = devices.filter(isSchedulableDevice);
+
   return (
     <Container className="py-4">
       <div className="d-flex justify-content-between align-items-start mb-4">
@@ -185,14 +201,15 @@ export default function DeviceSchedulesPage() {
                 value={newSchedule.device_id}
                 onChange={(e) => setNewSchedule({ ...newSchedule, device_id: e.target.value })}
                 required
+                  disabled={schedulableDevices.length === 0}
               >
-                {devices.length === 0 ? (
-                  <option value="">-- No Devices Found --</option>
+                {schedulableDevices.length === 0 ? (
+                  <option value="">-- No Light/Fan Devices Found --</option>
                 ) : (
-                  devices.map((d) => (
+                  schedulableDevices.map((d) => (
                     <option key={d.id} value={d.id}>
-                      {d.device_type === 'light' ? '💡 ' : '🔌 '} 
-                      {d.name} ({d.id})
+                      {d.type === 'light' ? '💡 ' : '🌀 '} 
+                      {d.name} ({d.type})
                     </option>
                   ))
                 )}
@@ -222,7 +239,7 @@ export default function DeviceSchedulesPage() {
           </Modal.Body>
           <Modal.Footer>
             <Button variant="secondary" onClick={() => setShowCreate(false)}>Cancel</Button>
-            <Button type="submit" variant="primary" disabled={createLoading || devices.length === 0}>
+            <Button type="submit" variant="primary" disabled={createLoading || schedulableDevices.length === 0}>
               {createLoading ? <Spinner size="sm" animation="border" /> : 'Save Schedule'}
             </Button>
           </Modal.Footer>
