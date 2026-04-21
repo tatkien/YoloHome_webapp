@@ -8,9 +8,9 @@ from app.db.db_utils import reset_sequence_to_min_gap
 from app.models.device import Device, DeviceTypeEnum
 from app.models.user import User
 
-from app.schemas.device import DeviceRead, DeviceUpdate, DeviceCreate, DeviceLogRead, DeviceControlRequest
+from app.schemas.device import DeviceRead, DeviceUpdate, DeviceCreate, DeviceLogRead, DeviceControlRequest, SensorDataRead
 from app.schemas.schedule import DeviceScheduleCreate, DeviceScheduleUpdate, DeviceScheduleRead
-from app.models.device import HardwareNode, DeviceLog
+from app.models.device import HardwareNode, DeviceLog, SensorData
 from app.models.device_schedule import DeviceSchedule
 from app.schemas.hardware import HardwareNodeRead
 from app.realtime.websocket_manager import realtime_manager
@@ -35,7 +35,6 @@ async def _get_device_or_404(db: AsyncSession, device_id: str) -> Device:
     if not device:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Device not found")
     return device
-
 
 async def _validate_pin_assignment(
     db: AsyncSession, hardware_id: str, pin: str, device_type: DeviceTypeEnum
@@ -217,6 +216,16 @@ async def list_devices(
     result = await db.execute(sa.select(Device).order_by(Device.created_at.desc()))
     return result.scalars().all()
 
+@router.get("/get-camera-devices", response_model=List[DeviceRead])
+async def get_camera_devices(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Get all camera devices."""
+    result = await db.execute(
+        sa.select(Device).where(Device.type == DeviceTypeEnum.CAMERA)
+    )
+    return result.scalars().all()
 
 @router.get("/{device_id}", response_model=DeviceRead)
 async def read_device(
@@ -424,6 +433,26 @@ async def get_device_history(
         sa.select(DeviceLog)
         .where(DeviceLog.device_id == device_id)
         .order_by(DeviceLog.created_at.desc())
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+@router.get("/{sensor_type}/sensor-data", response_model=List[SensorDataRead])
+async def get_sensor_data(
+    sensor_type: DeviceTypeEnum,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    limit: int = 20,
+):
+    """Get recent sensor data for a specific device."""
+    # Query sensor data ordered by newest first
+    if not sensor_type in [DeviceTypeEnum.TEMP_SENSOR, DeviceTypeEnum.HUMIDITY_SENSOR]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Device type is not compatible")
+    stmt = (
+        sa.select(SensorData)
+        .where(SensorData.sensor_type==sensor_type)
+        .order_by(SensorData.created_at.desc())
         .limit(limit)
     )
     result = await db.execute(stmt)

@@ -23,7 +23,7 @@ export default function AppNavbar() {
         </Navbar.Brand>
         <Navbar.Toggle aria-controls="main-nav" />
         <Navbar.Collapse id="main-nav">
-          <Nav className="me-auto">
+          <Nav className="me-auto" style={{ '--bs-nav-link-font-size': '1.05rem', '--bs-nav-link-font-weight': 600 }}>
             {user && (
               <>
                 <Nav.Link as={Link} to="/" active={isActive('/')}>
@@ -34,7 +34,7 @@ export default function AppNavbar() {
                 </Nav.Link>
                 {isAdmin && (
                   <NavDropdown
-                    title="Face AI"
+                    title={<span style={{ fontSize: '1.05rem', fontWeight: 600 }}>Face AI</span>}
                     id="face-dropdown"
                     active={location.pathname.startsWith('/face')}
                   >
@@ -46,6 +46,11 @@ export default function AppNavbar() {
                     </NavDropdown.Item>
                   </NavDropdown>
                 )}
+
+                <Nav.Link as={Link} to="/schedules" active={isActive('/schedules')}>
+                  Schedules
+                </Nav.Link>             
+
                 {!isAdmin && (
                   <Nav.Link as={Link} to="/face/logs" active={isActive('/face/logs')}>
                     📋 Face Logs
@@ -60,14 +65,14 @@ export default function AppNavbar() {
             )}
           </Nav>
 
-          <Nav>
+          <Nav style={{ '--bs-nav-link-font-size': '1.05rem', '--bs-nav-link-font-weight': 600 }}>
             {user ? (
               <>
-                <Nav.Link disabled style={{ color: 'var(--text-muted)', fontWeight: 500, fontSize: '0.85rem' }}>
+                <Nav.Link disabled style={{ color: 'var(--text-muted)', fontWeight: 500 }}>
                   {user.username}
                   {isAdmin && <span className="border border-black rounded-pill bg-warning ms-2" style={{padding: 3}}>admin</span>}
                 </Nav.Link>
-                <Nav.Link onClick={handleLogout} style={{padding: 4,cursor: 'pointer'}} >
+                <Nav.Link onClick={handleLogout} style={{ padding: 4, cursor: 'pointer', fontSize: '1rem', fontWeight: 600 }}>
                   Logout
                 </Nav.Link>
               </>

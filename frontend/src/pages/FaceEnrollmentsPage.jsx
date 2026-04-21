@@ -4,11 +4,40 @@ import {
 } from 'react-bootstrap';
 import api from '../services/api';
 
+const DEVICE_TYPE_LABELS = {
+  camera: 'Camera',
+  temp_sensor: 'Temperature',
+  humidity_sensor: 'Humidity',
+  light: 'Light',
+  fan: 'Fan',
+  lock: 'Lock',
+};
+
+const getFriendlyDeviceName = (device) => {
+  if (!device) return 'Device';
+
+  if (device.type && DEVICE_TYPE_LABELS[device.type]) {
+    return DEVICE_TYPE_LABELS[device.type];
+  }
+
+  const raw = `${device.name || ''}`.toLowerCase();
+  if (raw.includes('camera')) return 'Camera';
+  if (raw.includes('temp')) return 'Temperature';
+  if (raw.includes('humi')) return 'Humidity';
+  if (raw.includes('light')) return 'Light';
+  if (raw.includes('fan')) return 'Fan';
+  if (raw.includes('lock')) return 'Lock';
+
+  return device.name || 'Device';
+};
+
 export default function FaceEnrollmentsPage() {
   const [enrollments, setEnrollments] = useState([]);
+  const [devices, setDevices] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [usersLoading, setUsersLoading] = useState(false);
+  const [devicesLoading, setDevicesLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [filterDeviceId, setFilterDeviceId] = useState('');
@@ -60,8 +89,21 @@ export default function FaceEnrollmentsPage() {
     }
   }, []);
 
+  const fetchDevices = useCallback(async () => {
+    try {
+      setDevicesLoading(true);
+      const res = await api.get('/devices/get-camera-devices');
+      setDevices(res.data || []);
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to load devices');
+    } finally {
+      setDevicesLoading(false);
+    }
+  }, []);
+
   useEffect(() => { fetchEnrollments(); }, [fetchEnrollments]);
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
+  useEffect(() => { fetchDevices(); }, [fetchDevices]);
 
   // Fetch camera device for enrollment
   useEffect(() => {
@@ -267,6 +309,11 @@ export default function FaceEnrollmentsPage() {
     }
   };
 
+  const getDeviceLabelById = (deviceId) => {
+    const found = devices.find((d) => String(d.id) === String(deviceId));
+    return found ? getFriendlyDeviceName(found) : 'Unknown device';
+  };
+
   return (
     <Container className="py-4 fade-in">
       <div className="d-flex justify-content-between align-items-start mb-4">
@@ -284,13 +331,19 @@ export default function FaceEnrollmentsPage() {
       <div className="yh-card p-3 mb-4">
         <Row className="align-items-end">
           <Col md={4}>
-            <Form.Label>Filter by Device ID</Form.Label>
-            <Form.Control
-              type="number"
-              placeholder="All devices"
+            <Form.Label>Filter by Device</Form.Label>
+            <Form.Select
               value={filterDeviceId}
               onChange={(e) => setFilterDeviceId(e.target.value)}
-            />
+              disabled={devicesLoading}
+            >
+              <option value="">All devices</option>
+              {devices.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {getFriendlyDeviceName(d)}
+                </option>
+              ))}
+            </Form.Select>
           </Col>
         </Row>
       </div>
@@ -326,7 +379,11 @@ export default function FaceEnrollmentsPage() {
                         <small style={{ color: 'var(--text-muted)', marginLeft: '0.4rem' }}>#{e.user_id}</small>
                       ) : null}
                     </td>
-                    <td>{e.device_id ?? <span style={{ color: 'var(--text-muted)' }}>Global</span>}</td>
+                    <td>
+                      {e.device_id
+                        ? getDeviceLabelById(e.device_id)
+                        : <span style={{ color: 'var(--text-muted)' }}>Global</span>}
+                    </td>
                     <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                       {new Date(e.created_at).toLocaleString()}
                     </td>
@@ -399,7 +456,7 @@ export default function FaceEnrollmentsPage() {
                       borderRadius: 'var(--radius-sm)', padding: '0.65rem 1rem',
                       color: 'var(--accent-green)', fontWeight: 600,
                     }}>
-                      📷 {cameraDevice.name} ({cameraDevice.id})
+                      📷 Camera
                     </div>
                   ) : (
                     <div style={{

@@ -36,17 +36,6 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_users_id'), 'users', ['id'], unique=False)
     op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=True)
-    op.create_table('dashboards',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('owner_id', sa.Integer(), nullable=False),
-    sa.Column('name', sa.String(length=255), nullable=False),
-    sa.Column('description', sa.Text(), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.ForeignKeyConstraint(['owner_id'], ['users.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_dashboards_id'), 'dashboards', ['id'], unique=False)
-    op.create_index(op.f('ix_dashboards_owner_id'), 'dashboards', ['owner_id'], unique=False)
     op.create_table('hardware_nodes',
     sa.Column('id', sa.String(length=64), nullable=False),
     sa.Column('name', sa.String(length=128), nullable=False),
@@ -64,22 +53,6 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['updated_by_id'], ['users.id'], ondelete='SET NULL'),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_table('dashboard_widgets',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('dashboard_id', sa.Integer(), nullable=False),
-    sa.Column('title', sa.String(length=255), nullable=False),
-    sa.Column('widget_type', sa.String(length=64), nullable=False),
-    sa.Column('position_x', sa.Integer(), server_default='0', nullable=False),
-    sa.Column('position_y', sa.Integer(), server_default='0', nullable=False),
-    sa.Column('width', sa.Integer(), server_default='4', nullable=False),
-    sa.Column('height', sa.Integer(), server_default='3', nullable=False),
-    sa.Column('config', sa.JSON(), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.ForeignKeyConstraint(['dashboard_id'], ['dashboards.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_dashboard_widgets_dashboard_id'), 'dashboard_widgets', ['dashboard_id'], unique=False)
-    op.create_index(op.f('ix_dashboard_widgets_id'), 'dashboard_widgets', ['id'], unique=False)
     op.create_table('devices',
     sa.Column('id', sa.String(length=64), nullable=False),
     sa.Column('name', sa.String(length=128), nullable=False),
@@ -196,14 +169,8 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_devices_type'), table_name='devices')
     op.drop_index(op.f('ix_devices_search_keywords'), table_name='devices')
     op.drop_table('devices')
-    op.drop_index(op.f('ix_dashboard_widgets_id'), table_name='dashboard_widgets')
-    op.drop_index(op.f('ix_dashboard_widgets_dashboard_id'), table_name='dashboard_widgets')
-    op.drop_table('dashboard_widgets')
     op.drop_table('invitation_keys')
     op.drop_table('hardware_nodes')
-    op.drop_index(op.f('ix_dashboards_owner_id'), table_name='dashboards')
-    op.drop_index(op.f('ix_dashboards_id'), table_name='dashboards')
-    op.drop_table('dashboards')
     op.drop_index(op.f('ix_users_username'), table_name='users')
     op.drop_index(op.f('ix_users_id'), table_name='users')
     op.drop_table('users')

@@ -94,7 +94,7 @@ class SensorData(Base):
 
     id = sa.Column(sa.Integer, primary_key=True, index=True)
     device_id = sa.Column(
-        sa.String(64), sa.ForeignKey("devices.id", ondelete="CASCADE"), index=True
+        sa.String(64), sa.ForeignKey("devices.id", ondelete="SET NULL"), index=True
     )
     value = sa.Column(sa.Float, nullable=False)
     sensor_type = sa.Column(sa.Enum(DeviceTypeEnum, 

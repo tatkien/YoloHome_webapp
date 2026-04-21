@@ -1,13 +1,14 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Container, Row, Col, Card, Button, Alert, Spinner, Badge, Form, ButtonGroup } from 'react-bootstrap';
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Container, Row, Col, Card, Alert, Spinner,
+  Badge, Form, ButtonGroup, Button
+} from 'react-bootstrap';
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, ReferenceLine
+} from 'recharts';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
-
-const MAX_FRAMES = 3;
-const WARMUP_MS = 1000;
-const FRAME_INTERVAL_MS = 180;
-
-const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 const DEVICE_ICONS = {
   fan: '🌀', light: '💡', camera: '📷', lock: '🔒',
@@ -15,84 +16,216 @@ const DEVICE_ICONS = {
 };
 
 const DEVICE_UNITS = {
-  temp_sensor: '°C', humidity_sensor: '%', fan: ' speed',
+  temp_sensor: '°C', humidity_sensor: '%', fan: '',
 };
 
+const SENSOR_TYPES = ['temp_sensor', 'humidity_sensor'];
+
+const SENSOR_COLORS = ['#0d6efd', '#198754', '#fd7e14', '#dc3545', '#6f42c1', '#0dcaf0'];
+
+/* Format timestamp from API for X axis label */
+const formatTime = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}`;
+};
+
+/* Custom tooltip for the chart */
+const CustomTooltip = ({ active, payload, label }) => {
+  if (!active || !payload || !payload.length) return null;
+  return (
+    <div className="bg-white border rounded shadow-sm p-2" style={{ fontSize: '0.75rem' }}>
+      <p className="text-muted mb-1">{label}</p>
+      {payload.map((p) => (
+        <p key={p.dataKey} className="mb-0 fw-semibold" style={{ color: p.color }}>
+          {p.name}: {p.value}{p.unit || ''}
+        </p>
+      ))}
+    </div>
+  );
+};
+
+/* ── Sensor Chart Card ── */
+function SensorChart({ sensor, color }) {
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const unit = DEVICE_UNITS[sensor.type] || '';
+
+  const fetchData = useCallback(async () => {
+    try {
+      const res = await api.get(`/devices/${sensor.type}/sensor-data`, { params: { limit: 20 } });
+      // API returns newest-first, reverse for chronological display
+      const points = [...res.data].reverse().map((item) => ({
+        time: formatTime(item.created_at),
+        value: parseFloat(item.value),
+        raw: item.created_at,
+      }));
+      setData(points);
+    } catch {
+      /* silent */
+    } finally {
+      setLoading(false);
+    }
+  }, [sensor.type]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  /* Listen to WS updates and append new point */
+  useEffect(() => {
+    const handler = (e) => {
+      const payload = e.detail;
+      if (
+        payload.event === 'sensor_update' &&
+        payload.hardware_id === sensor.hardware_id &&
+        payload.data[sensor.pin] !== undefined
+      ) {
+        const newPoint = {
+          time: formatTime(new Date().toISOString()),
+          value: parseFloat(payload.data[sensor.pin]),
+          raw: new Date().toISOString(),
+        };
+        setData((prev) => {
+          const next = [...prev, newPoint];
+          return next.length > 20 ? next.slice(next.length - 20) : next;
+        });
+      }
+    };
+    window.addEventListener('yolohome:ws', handler);
+    return () => window.removeEventListener('yolohome:ws', handler);
+  }, [sensor.hardware_id, sensor.pin]);
+
+  const latestValue = data.length > 0 ? data[data.length - 1].value : sensor.value;
+  const minVal = data.length > 0 ? Math.min(...data.map(d => d.value)) : null;
+  const maxVal = data.length > 0 ? Math.max(...data.map(d => d.value)) : null;
+
+  return (
+    <Card className="shadow-sm border h-100">
+      <Card.Header className="bg-white border-bottom d-flex justify-content-between align-items-center">
+        <div className="d-flex align-items-center gap-2">
+          <span>{DEVICE_ICONS[sensor.type] || '📊'}</span>
+          <span className="fw-semibold small">{sensor.name}</span>
+          <Badge bg="light" text="dark" className="border small">{sensor.room || 'No room'}</Badge>
+        </div>
+        <div className="d-flex align-items-center gap-2">
+          <span className="fw-bold" style={{ color, fontSize: '1.1rem' }}>
+            {latestValue != null ? `${latestValue}${unit}` : '—'}
+          </span>
+          <Badge bg={sensor.is_on ? 'success' : 'secondary'} className="small">
+            {sensor.is_on ? 'ON' : 'OFF'}
+          </Badge>
+        </div>
+      </Card.Header>
+
+      <Card.Body className="p-3">
+        {loading ? (
+          <div className="d-flex align-items-center justify-content-center py-4 text-muted">
+            <Spinner size="sm" animation="border" className="me-2" />
+            <small>Loading history...</small>
+          </div>
+        ) : data.length === 0 ? (
+          <div className="text-center text-muted py-4">
+            <div className="fs-3 mb-1">📉</div>
+            <small>No data yet</small>
+          </div>
+        ) : (
+          <>
+            {/* Stat row */}
+            <Row className="g-2 mb-3">
+              <Col xs={4} className="text-center">
+                <p className="text-muted mb-0" style={{ fontSize: '0.65rem' }}>MIN</p>
+                <p className="fw-bold mb-0 small text-primary">{minVal}{unit}</p>
+              </Col>
+              <Col xs={4} className="text-center border-start border-end">
+                <p className="text-muted mb-0" style={{ fontSize: '0.65rem' }}>CURRENT</p>
+                <p className="fw-bold mb-0 small" style={{ color }}>{latestValue}{unit}</p>
+              </Col>
+              <Col xs={4} className="text-center">
+                <p className="text-muted mb-0" style={{ fontSize: '0.65rem' }}>MAX</p>
+                <p className="fw-bold mb-0 small text-danger">{maxVal}{unit}</p>
+              </Col>
+            </Row>
+
+            {/* Line chart */}
+            <ResponsiveContainer width="100%" height={140}>
+              <LineChart data={data} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis
+                  dataKey="time"
+                  tick={{ fontSize: 10, fill: '#adb5bd' }}
+                  tickLine={false}
+                  axisLine={false}
+                  interval="preserveStartEnd"
+                />
+                <YAxis
+                  tick={{ fontSize: 10, fill: '#adb5bd' }}
+                  tickLine={false}
+                  axisLine={false}
+                  domain={['auto', 'auto']}
+                />
+                <Tooltip content={<CustomTooltip />} />
+                {latestValue != null && (
+                  <ReferenceLine
+                    y={latestValue}
+                    stroke={color}
+                    strokeDasharray="4 4"
+                    strokeOpacity={0.4}
+                  />
+                )}
+                <Line
+                  type="monotone"
+                  dataKey="value"
+                  name={sensor.name}
+                  unit={unit}
+                  stroke={color}
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4, fill: color }}
+                  isAnimationActive={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+
+            <p className="text-muted mb-0 text-end" style={{ fontSize: '0.65rem' }}>
+              Last {data.length} readings · live
+            </p>
+          </>
+        )}
+      </Card.Body>
+    </Card>
+  );
+}
+
+/* ── Main Page ── */
 export default function HomePage() {
   const { user, isAdmin } = useAuth();
 
-  // --- Device monitoring state ---
   const [devices, setDevices] = useState([]);
   const [devicesLoading, setDevicesLoading] = useState(true);
-
-  // --- Camera state ---
-  const [camera, setCamera] = useState(null);
-  const [cameraLoading, setCameraLoading] = useState(true);
-
-  // --- Recognition state ---
-  const [preview, setPreview] = useState(null);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [result, setResult] = useState(null);
-  const [cameraOn, setCameraOn] = useState(false);
-  const [phaseText, setPhaseText] = useState('Camera is off');
-  const [currentFrame, setCurrentFrame] = useState(0);
-  const [spoofDetected, setSpoofDetected] = useState(false);
 
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const captureCanvasRef = useRef(null);
-  const canvasRef = useRef(null);
-  const imgRef = useRef(null);
-
-  // --- Fetch devices ---
   const fetchDevices = useCallback(async () => {
     try {
       setDevicesLoading(true);
       const res = await api.get('/devices/');
       setDevices(res.data);
-    } catch {
-      // silent
-    } finally {
-      setDevicesLoading(false);
-    }
+    } catch { /* silent */ } finally { setDevicesLoading(false); }
   }, []);
 
-  // --- Fetch camera device ---
-  const fetchCamera = useCallback(async () => {
-    try {
-      setCameraLoading(true);
-      const res = await api.get('/face/camera');
-      setCamera(res.data.camera);
-    } catch {
-      setCamera(null);
-    } finally {
-      setCameraLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchDevices();
-    fetchCamera();
-  }, [fetchDevices, fetchCamera]);
+  useEffect(() => { fetchDevices(); }, [fetchDevices]);
 
   useEffect(() => {
     const handleWsMessage = (e) => {
       const payload = e.detail;
       if (payload.event === 'sensor_update') {
         setDevices((prev) => prev.map(d => {
-          if (d.hardware_id === payload.hardware_id && payload.data[d.pin] !== undefined) {
+          if (d.hardware_id === payload.hardware_id && payload.data[d.pin] !== undefined)
             return { ...d, value: payload.data[d.pin] };
-          }
           return d;
         }));
       } else if (payload.event === 'device_update') {
-        setDevices((prev) => prev.map(d => {
-          if (d.id === payload.device_id) {
-            return { ...d, is_on: payload.data.is_on, value: payload.data.value };
-          }
-          return d;
-        }));
+        setDevices((prev) => prev.map(d =>
+          d.id === payload.device_id ? { ...d, is_on: payload.data.is_on, value: payload.data.value } : d
+        ));
       }
     };
     window.addEventListener('yolohome:ws', handleWsMessage);
@@ -100,380 +233,164 @@ export default function HomePage() {
   }, []);
 
   const handleDeviceCommand = async (deviceId, isOn, value) => {
-    // Optimistic UI update
     setDevices((prev) => prev.map(d => d.id === deviceId ? { ...d, is_on: isOn, value } : d));
     try {
-      await api.post(`/devices/${deviceId}/command`, {
-        is_on: isOn,
-        value: value
-      });
-    } catch (err) {
-      console.error("Failed to send command", err);
-      // Revert state by fetching truth from server
-      fetchDevices();
-    }
+      await api.post(`/devices/${deviceId}/command`, { is_on: isOn, value });
+    } catch (err) { console.error('Failed to send command', err); fetchDevices(); }
   };
 
-  // --- Recognition result helpers ---
-  const statusText = (result?.status || '').toLowerCase();
-  const isRecognized = statusText === 'recognized';
-  const isSpoof = statusText.includes('spoof');
-
-  // --- Canvas drawing ---
-  const drawCanvas = useCallback(() => {
-    const canvas = canvasRef.current;
-    const img = imgRef.current;
-    if (!canvas || !img || !img.complete || !img.naturalWidth) return;
-    const ctx = canvas.getContext('2d');
-    canvas.width = img.naturalWidth;
-    canvas.height = img.naturalHeight;
-    ctx.drawImage(img, 0, 0);
-    if (result?.bbox && result.bbox.length === 4) {
-      const [x1, y1, x2, y2] = result.bbox;
-      const color = isRecognized ? '#34d399' : (isSpoof ? '#f87171' : '#fbbf24');
-      ctx.strokeStyle = color;
-      ctx.lineWidth = Math.max(2, Math.round(img.naturalWidth / 200));
-      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-      const label = result.matched_user_name
-        ? `${result.matched_user_name} (${((result.confidence || 0) * 100).toFixed(1)}%)`
-        : `Face (${((result.detection_score || 0) * 100).toFixed(1)}%)`;
-      const fontSize = Math.max(14, Math.round(img.naturalWidth / 40));
-      ctx.font = `bold ${fontSize}px sans-serif`;
-      const textWidth = ctx.measureText(label).width;
-      const pad = 4;
-      ctx.fillStyle = color;
-      ctx.fillRect(x1, y1 - fontSize - pad * 2, textWidth + pad * 2, fontSize + pad * 2);
-      ctx.fillStyle = 'white';
-      ctx.fillText(label, x1 + pad, y1 - pad);
-    }
-  }, [result, isRecognized, isSpoof]);
-
-  useEffect(() => { drawCanvas(); }, [preview, result, drawCanvas]);
-
-  // --- Camera controls ---
-  const stopCamera = useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) videoRef.current.srcObject = null;
-    setCameraOn(false);
-    setPhaseText('Camera is off');
-  }, []);
-
-  useEffect(() => () => stopCamera(), [stopCamera]);
-
-  const startCamera = useCallback(async () => {
-    if (streamRef.current) return;
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
-      audio: false,
-    });
-    streamRef.current = stream;
-    if (videoRef.current) {
-      videoRef.current.srcObject = stream;
-      await new Promise((r) => { videoRef.current.onloadedmetadata = r; });
-      await videoRef.current.play();
-    }
-    setCameraOn(true);
-    setPhaseText('Camera ready');
-  }, []);
-
-  const captureFrame = useCallback(async () => {
-    const video = videoRef.current;
-    const canvas = captureCanvasRef.current;
-    if (!video || !canvas || !video.videoWidth) throw new Error('Camera not ready');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
-    const blob = await new Promise((resolve, reject) => {
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Capture failed'))), 'image/jpeg', 0.72);
-    });
-    return { blob, dataUrl };
-  }, []);
-
-  const submitFrame = useCallback(async (blob, index) => {
-    const fd = new FormData();
-    fd.append('image', blob, `frame-${index}.jpg`);
-    fd.append('device_id', camera.id);
-    const res = await api.post('/face/recognize', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-    return res.data;
-  }, [camera]);
-
-  // --- Main recognition flow ---
-  const handleRecognize = async (e) => {
-    e.preventDefault();
-    if (spoofDetected || !camera) return;
-    setError('');
-    setLoading(true);
-    setResult(null);
-    setCurrentFrame(0);
-
-    try {
-      if (!streamRef.current) {
-        setPhaseText('Opening camera...');
-        await startCamera();
-      }
-      setPhaseText(`Warming up camera...`);
-      await sleep(WARMUP_MS);
-
-      let lastResponse = null;
-      for (let i = 1; i <= MAX_FRAMES; i++) {
-        setCurrentFrame(i);
-        setPhaseText(`Capturing frame ${i}/${MAX_FRAMES}...`);
-        const { blob, dataUrl } = await captureFrame();
-        setPreview(dataUrl);
-
-        setPhaseText(`Sending frame ${i}/${MAX_FRAMES}...`);
-        const response = await submitFrame(blob, i);
-        lastResponse = response;
-
-        if (response.status === 'recognized') {
-          setResult(response);
-          setPhaseText(`✅ Recognized! ${response.door_unlocked ? '🔓 Door unlocked!' : ''}`);
-          stopCamera();
-          setLoading(false);
-          return;
-        }
-
-        // Spoof detected → stop immediately
-        if (response.status?.toLowerCase().includes('spoof')) {
-          setResult(response);
-          setSpoofDetected(true);
-          setPhaseText('⚠️ Spoof detected — camera stopped.');
-          stopCamera();
-          setLoading(false);
-          return;
-        }
-
-        if (i < MAX_FRAMES) await sleep(FRAME_INTERVAL_MS);
-      }
-
-      // All frames processed, no match
-      setResult(lastResponse);
-      setPhaseText('No match found.');
-    } catch (err) {
-      setError(err.response?.data?.detail || 'Recognition failed');
-    } finally {
-      setLoading(false);
-      setCurrentFrame(0);
-    }
-  };
-
-  const reset = () => {
-    setPreview(null);
-    setResult(null);
-    setError('');
-    setSpoofDetected(false);
-    setPhaseText(cameraOn ? 'Camera ready' : 'Camera is off');
-    setCurrentFrame(0);
-    if (cameraOn) stopCamera();
-  };
-
-  // --- Render helpers ---
   const renderDeviceValue = (d) => {
     const unit = DEVICE_UNITS[d.type] || '';
     if (d.type === 'lock') return d.is_on ? '🔓 Open' : '🔒 Locked';
-    if (d.type === 'light') return d.is_on ? '💡 On' : '⚫ Off';
-    if (d.type === 'camera') return d.is_on ? '🟢 Active' : '⚫ Off';
+    if (d.type === 'light') return d.is_on ? '💡 On' : 'Off';
+    if (d.type === 'camera') return d.is_on ? '🟢 Active' : 'Off';
     if (d.type === 'fan') return d.is_on ? `Speed ${Math.round(d.value)}` : 'Off';
     return `${d.value}${unit}`;
   };
 
+  const sensors = devices.filter(d => SENSOR_TYPES.includes(d.type));
+  const nonSensors = devices.filter(d => !SENSOR_TYPES.includes(d.type));
+
   return (
-    <Container className="py-4 fade-in">
-      {/* Welcome */}
-      <Row className="justify-content-center text-center mb-4">
-        <Col md={8}>
-          <div style={{ fontSize: '2.5rem', marginBottom: '0.25rem' }}>🏠</div>
-          <h1 style={{ fontWeight: 700, fontSize: '2rem', marginBottom: '0.25rem' }}>
-            Welcome, <span style={{ background: 'var(--gradient-primary)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>{user?.username}</span>
+    <Container className="py-4 bg-white min-vh-100">
+
+      {/* ── Header ── */}
+      <Row className="align-items-center mb-4 pb-3 border-bottom">
+        <Col>
+          <p className="text-muted small text-uppercase fw-semibold mb-1">YoloHome · Control Center</p>
+          <h1 className="h3 fw-bold mb-0">
+            Welcome back, <span className="text-primary">{user?.username}</span>
           </h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '1rem' }}>YoloHome Smart Dashboard</p>
         </Col>
       </Row>
 
-      {error && <Alert variant="danger" dismissible onClose={() => setError('')}>{error}</Alert>}
-
-      {/* Face Recognition Board */}
-      {cameraLoading ? (
-        <div className="text-center py-3"><Spinner size="sm" animation="border" /></div>
-      ) : camera ? (
-        <Row className="g-4 mb-4">
-          <Col lg={6}>
-            <div className="yh-card p-4">
-              <div className="d-flex align-items-center justify-content-between mb-3">
-                <h5 style={{ fontWeight: 700, margin: 0 }}>🔍 Face Recognition</h5>
-                <Badge bg="info" style={{ fontSize: '0.7rem' }}>{camera.name}</Badge>
-              </div>
-              <form onSubmit={handleRecognize}>
-                <div className="camera-preview-zone mb-3">
-                  <video ref={videoRef} muted autoPlay playsInline style={{
-                    width: '100%', maxHeight: '280px', borderRadius: 'var(--radius-sm)',
-                    background: 'var(--bg-input)', objectFit: 'cover',
-                  }} />
-                  <canvas ref={captureCanvasRef} style={{ display: 'none' }} />
-                </div>
-
-                <div style={{ marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                  {phaseText}
-                  {currentFrame > 0 ? ` (frame ${currentFrame}/${MAX_FRAMES})` : ''}
-                </div>
-
-                <div className="d-flex gap-2">
-                  <Button type="submit" disabled={loading || spoofDetected} className="flex-grow-1">
-                    {loading ? <><Spinner size="sm" animation="border" /> Recognizing...</> : '🔍 Recognize'}
-                  </Button>
-                  <Button variant="outline-light" onClick={cameraOn ? stopCamera : startCamera}
-                    type="button" disabled={loading || spoofDetected}>
-                    {cameraOn ? 'Stop' : 'Start'}
-                  </Button>
-                  <Button variant="outline-light" onClick={reset} type="button">Reset</Button>
-                </div>
-              </form>
-            </div>
-          </Col>
-
-          <Col lg={6}>
-            {preview && (
-              <div className="yh-card p-4 mb-3">
-                <h6 style={{ fontWeight: 600, marginBottom: '0.75rem', color: 'var(--text-secondary)' }}>Preview</h6>
-                <img ref={imgRef} src={preview} alt="preview" onLoad={drawCanvas} style={{ display: 'none' }} />
-                <canvas ref={canvasRef} style={{
-                  width: '100%', maxHeight: '300px', objectFit: 'contain',
-                  borderRadius: 'var(--radius-sm)', background: 'var(--bg-input)',
-                }} />
-              </div>
-            )}
-            {result && (
-              <div className={`result-card ${isRecognized ? 'recognized' : (isSpoof ? 'spoof' : 'unknown')}`}>
-                <div className="d-flex justify-content-between align-items-center mb-2">
-                  <h6 style={{ fontWeight: 700, margin: 0 }}>Result</h6>
-                  <span className={isRecognized ? 'badge-recognized' : (isSpoof ? 'badge-spoof' : 'badge-unknown')}>
-                    {isRecognized ? '✓ Recognized' : (isSpoof ? '⚠ Spoof' : '? Unknown')}
-                  </span>
-                </div>
-                <Row className="g-2">
-                  {result.matched_user_name && (
-                    <Col xs={6}>
-                      <div className="stat-label">Matched</div>
-                      <div style={{ fontWeight: 700, color: 'var(--accent-green)' }}>{result.matched_user_name}</div>
-                    </Col>
-                  )}
-                  {result.confidence != null && (
-                    <Col xs={6}>
-                      <div className="stat-label">Confidence</div>
-                      <div className="stat-value" style={{ fontSize: '1.2rem' }}>{(result.confidence * 100).toFixed(1)}%</div>
-                    </Col>
-                  )}
-                  {result.door_unlocked && (
-                    <Col xs={12}>
-                      <Alert variant="success" className="mt-2 mb-0 py-2 text-center" style={{ fontSize: '0.9rem' }}>
-                        🔓 Door has been unlocked!
-                      </Alert>
-                    </Col>
-                  )}
-                </Row>
-              </div>
-            )}
-            {!preview && !result && (
-              <div className="yh-card p-4 d-flex align-items-center justify-content-center" style={{ minHeight: '200px' }}>
-                <div className="text-center" style={{ color: 'var(--text-muted)' }}>
-                  <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>🖼️</div>
-                  <p>Click "Recognize" to start face recognition</p>
-                </div>
-              </div>
-            )}
-          </Col>
-        </Row>
-      ) : null}
-
-      {/* Device Monitoring Grid */}
-      <div className="d-flex align-items-center justify-content-between mb-3">
-        <h4 style={{ fontWeight: 700, margin: 0 }}>📡 Device Monitor</h4>
-        <small style={{ color: 'var(--text-muted)' }}>{devices.length} device{devices.length !== 1 ? 's' : ''}</small>
-      </div>
+      {/* ── Error ── */}
+      {error && (
+        <Alert variant="danger" dismissible onClose={() => setError('')} className="mb-4">
+          {error}
+        </Alert>
+      )}
 
       {devicesLoading ? (
-        <div className="text-center py-4"><Spinner animation="border" /></div>
-      ) : devices.length === 0 ? (
-        <div className="yh-card p-4 text-center" style={{ color: 'var(--text-muted)' }}>
-          <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>📡</div>
-          <p>No devices configured yet.{isAdmin ? ' Go to Devices page to add hardware.' : ' Ask admin to set up devices.'}</p>
+        <div className="text-center py-5 text-muted">
+          <Spinner animation="border" />
+          <p className="small mt-2 mb-0">Loading devices...</p>
         </div>
       ) : (
-        <Row className="g-3">
-          {devices.map((d) => (
-            <Col xs={6} md={4} lg={3} key={d.id}>
-              <Card className="device-monitor-card h-100">
-                <Card.Body className="p-3 text-center">
-                  <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>{DEVICE_ICONS[d.type] || '📦'}</div>
-                  <Card.Title style={{ fontSize: '0.9rem', marginBottom: '0.25rem' }}>{d.name}</Card.Title>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
-                    {d.room || 'No room'}
-                  </div>
+        <>
+          {/* ── Sensor Charts ── */}
+          {sensors.length > 0 && (
+            <>
+              <div className="d-flex align-items-center justify-content-between mb-3">
+                <h5 className="fw-semibold mb-0">📈 Sensor Readings</h5>
+                <Badge bg="light" text="dark" className="border">
+                  {sensors.length} sensor{sensors.length !== 1 ? 's' : ''} · live
+                </Badge>
+              </div>
+              <Row className="g-3 mb-5">
+                {sensors.map((sensor, idx) => (
+                  <Col xs={12} md={6} key={sensor.id}>
+                    <SensorChart
+                      sensor={sensor}
+                      color={SENSOR_COLORS[idx % SENSOR_COLORS.length]}
+                    />
+                  </Col>
+                ))}
+              </Row>
+            </>
+          )}
 
-                  {d.type === 'light' && (
-                    <div className="d-flex justify-content-center align-items-center mt-3">
-                      <Form.Check 
-                        type="switch" 
-                        id={`switch-${d.id}`}
-                        checked={d.is_on} 
-                        onChange={(e) => handleDeviceCommand(d.id, e.target.checked, e.target.checked ? 1 : 0)} 
-                      />
-                      <span className="ms-2 fw-bold" style={{ color: d.is_on ? 'var(--accent-green)' : 'var(--text-muted)' }}>
-                        {d.is_on ? 'ON' : 'OFF'}
-                      </span>
-                    </div>
-                  )}
+          {/* ── Device Monitor ── */}
+          <div className="d-flex align-items-center justify-content-between mb-3">
+            <h5 className="fw-semibold mb-0">📡 Device Monitor</h5>
+            <Badge bg="light" text="dark" className="border">
+              {nonSensors.length} device{nonSensors.length !== 1 ? 's' : ''}
+            </Badge>
+          </div>
 
-                  {d.type === 'fan' && (
-                    <div className="mt-3">
-                      <div className="d-flex justify-content-center align-items-center mb-2">
-                        <Form.Check 
-                          type="switch" 
-                          id={`switch-${d.id}`}
-                          checked={d.is_on} 
-                          onChange={(e) => {
-                            const willBeOn = e.target.checked;
-                            handleDeviceCommand(d.id, willBeOn, willBeOn ? (d.value > 0 ? d.value : 1) : 0);
-                          }} 
-                        />
-                        <span className="ms-2 fw-bold" style={{ color: d.is_on ? 'var(--accent-green)' : 'var(--text-muted)' }}>
+          {nonSensors.length === 0 ? (
+            <Card className="shadow-sm border-0 text-center py-5 text-muted">
+              <Card.Body>
+                <div className="fs-1 mb-2">📡</div>
+                <p className="mb-0 small">
+                  {isAdmin
+                    ? 'No devices configured. Go to Devices page to add hardware.'
+                    : 'No devices configured. Ask admin to set up devices.'}
+                </p>
+              </Card.Body>
+            </Card>
+          ) : (
+            <Row className="g-3">
+              {nonSensors.map((d) => (
+                <Col xs={6} md={4} lg={3} key={d.id}>
+                  <Card className="shadow-sm border h-100">
+                    <Card.Body className="p-3">
+
+                      <div className="d-flex justify-content-between align-items-start mb-2">
+                        <span className="fs-4">{DEVICE_ICONS[d.type] || '📦'}</span>
+                        <Badge bg={d.is_on ? 'success' : 'secondary'}>
                           {d.is_on ? 'ON' : 'OFF'}
-                        </span>
+                        </Badge>
                       </div>
-                      {d.is_on && (
-                        <ButtonGroup size="sm" className="w-100 mt-2">
-                          {[1, 2, 3].map(lvl => (
-                            <Button 
-                              key={lvl} 
-                              variant={d.value === lvl ? "primary" : "outline-primary"}
-                              onClick={() => handleDeviceCommand(d.id, true, lvl)}
-                            >
-                              Speed {lvl}
-                            </Button>
-                          ))}
-                        </ButtonGroup>
-                      )}
-                    </div>
-                  )}
 
-                  {!['light', 'fan'].includes(d.type) && (
-                    <div className="mt-3" style={{
-                      fontSize: '1.1rem', fontWeight: 700,
-                      color: d.is_on || d.value > 0 ? 'var(--accent-green)' : 'var(--text-muted)',
-                    }}>
-                      {renderDeviceValue(d)}
-                    </div>
-                  )}
-                </Card.Body>
-              </Card>
-            </Col>
-          ))}
-        </Row>
+                      <p className="fw-semibold small mb-0">{d.name}</p>
+                      <p className="text-muted small mb-2">{d.room || 'No room'}</p>
+
+                      {d.type === 'light' && (
+                        <Form.Check
+                          type="switch"
+                          id={`sw-${d.id}`}
+                          label={d.is_on ? 'On' : 'Off'}
+                          checked={d.is_on}
+                          onChange={e => handleDeviceCommand(d.id, e.target.checked, e.target.checked ? 1 : 0)}
+                          className={d.is_on ? 'text-success' : 'text-muted'}
+                        />
+                      )}
+
+                      {d.type === 'fan' && (
+                        <>
+                          <Form.Check
+                            type="switch"
+                            id={`sw-${d.id}`}
+                            label={d.is_on ? 'On' : 'Off'}
+                            checked={d.is_on}
+                            onChange={e => {
+                              const on = e.target.checked;
+                              handleDeviceCommand(d.id, on, on ? (d.value > 0 ? d.value : 1) : 0);
+                            }}
+                            className={`mb-2 ${d.is_on ? 'text-success' : 'text-muted'}`}
+                          />
+                          {d.is_on && (
+                            <ButtonGroup size="sm" className="w-100">
+                              {[1, 2, 3].map(lvl => (
+                                <Button
+                                  key={lvl}
+                                  variant={d.value === lvl ? 'primary' : 'outline-primary'}
+                                  onClick={() => handleDeviceCommand(d.id, true, lvl)}
+                                >
+                                  {lvl}
+                                </Button>
+                              ))}
+                            </ButtonGroup>
+                          )}
+                        </>
+                      )}
+
+                      {!['light', 'fan'].includes(d.type) && (
+                        <p className={`fw-bold small mb-0 ${(d.is_on || d.value > 0) ? 'text-success' : 'text-muted'}`}>
+                          {renderDeviceValue(d)}
+                        </p>
+                      )}
+
+                    </Card.Body>
+                  </Card>
+                </Col>
+              ))}
+            </Row>
+          )}
+        </>
       )}
+
     </Container>
   );
 }

@@ -4,9 +4,38 @@ import {
 } from 'react-bootstrap';
 import api from '../services/api';
 
+const DEVICE_TYPE_LABELS = {
+  camera: 'Camera',
+  temp_sensor: 'Temperature',
+  humidity_sensor: 'Humidity',
+  light: 'Light',
+  fan: 'Fan',
+  lock: 'Lock',
+};
+
+const getFriendlyDeviceName = (device) => {
+  if (!device) return 'Device';
+
+  if (device.type && DEVICE_TYPE_LABELS[device.type]) {
+    return DEVICE_TYPE_LABELS[device.type];
+  }
+
+  const raw = `${device.name || ''}`.toLowerCase();
+  if (raw.includes('camera')) return 'Camera';
+  if (raw.includes('temp')) return 'Temperature';
+  if (raw.includes('humi')) return 'Humidity';
+  if (raw.includes('light')) return 'Light';
+  if (raw.includes('fan')) return 'Fan';
+  if (raw.includes('lock')) return 'Lock';
+
+  return device.name || 'Device';
+};
+
 export default function FaceLogsPage() {
   const [logs, setLogs] = useState([]);
+  const [devices, setDevices] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [devicesLoading, setDevicesLoading] = useState(false);
   const [error, setError] = useState('');
   const [filterDeviceId, setFilterDeviceId] = useState('');
   const [limit, setLimit] = useState(100);
@@ -29,7 +58,20 @@ export default function FaceLogsPage() {
     }
   }, [filterDeviceId, limit]);
 
+  const fetchDevices = useCallback(async () => {
+    try {
+      setDevicesLoading(true);
+      const res = await api.get('/devices/get-camera-devices/');
+      setDevices(res.data || []);
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to load devices');
+    } finally {
+      setDevicesLoading(false);
+    }
+  }, []);
+
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
+  useEffect(() => { fetchDevices(); }, [fetchDevices]);
 
   const revokePreviewUrl = useCallback(() => {
     if (previewImageUrlRef.current) {
@@ -118,13 +160,19 @@ export default function FaceLogsPage() {
             <Row className="align-items-end g-3">
               <Col md={3}>
                 <Form.Group>
-                  <Form.Label className="small fw-bold">Device ID</Form.Label>
-                  <Form.Control
-                    type="number"
-                    placeholder="All devices"
+                  <Form.Label className="small fw-bold">Device</Form.Label>
+                  <Form.Select
                     value={filterDeviceId}
                     onChange={(e) => setFilterDeviceId(e.target.value)}
-                  />
+                    disabled={devicesLoading}
+                  >
+                    <option value="">All devices</option>
+                    {devices.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {getFriendlyDeviceName(d)}
+                      </option>
+                    ))}
+                  </Form.Select>
                 </Form.Group>
               </Col>
               <Col md={3}>
@@ -195,7 +243,7 @@ export default function FaceLogsPage() {
                     </td>
                     <td>
                       <Badge bg="light" text="dark" className="border" style={{marginRight: '12px'}}>
-                        {log.device_id ?? 'Unknown'}
+                        {getFriendlyDeviceName(devices.find((d) => String(d.id) === String(log.device_id))) || 'Unknown'}
                       </Badge>
                     </td>
                     <td className="px-4 text-muted small">
