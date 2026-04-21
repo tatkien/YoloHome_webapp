@@ -53,7 +53,7 @@ function SensorChart({ sensor, color }) {
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await api.get(`/devices/${sensor.id}/sensor-data`, { params: { limit: 20 } });
+      const res = await api.get(`/devices/${sensor.type}/sensor-data`, { params: { limit: 20 } });
       // API returns newest-first, reverse for chronological display
       const points = [...res.data].reverse().map((item) => ({
         time: formatTime(item.created_at),
@@ -66,7 +66,7 @@ function SensorChart({ sensor, color }) {
     } finally {
       setLoading(false);
     }
-  }, [sensor.id]);
+  }, [sensor.type]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 

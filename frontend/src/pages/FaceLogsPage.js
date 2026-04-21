@@ -61,7 +61,7 @@ export default function FaceLogsPage() {
   const fetchDevices = useCallback(async () => {
     try {
       setDevicesLoading(true);
-      const res = await api.get('/devices/');
+      const res = await api.get('/devices/get-camera-devices/');
       setDevices(res.data || []);
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to load devices');

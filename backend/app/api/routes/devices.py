@@ -36,19 +36,6 @@ async def _get_device_or_404(db: AsyncSession, device_id: str) -> Device:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Device not found")
     return device
 
-async def _get_sensor_or_404(db: AsyncSession, sensor_id: str) -> Device:
-    """Find a sensor device by UUID or raise 404."""
-    result = await db.execute(
-        sa.select(Device).where(
-            Device.id == sensor_id,
-            Device.type.in_([DeviceTypeEnum.TEMP_SENSOR, DeviceTypeEnum.HUMIDITY_SENSOR]),
-        )
-    )
-    sensor = result.scalar_one_or_none()
-    if not sensor:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Sensor not found")
-    return sensor
-
 async def _validate_pin_assignment(
     db: AsyncSession, hardware_id: str, pin: str, device_type: DeviceTypeEnum
 ) -> None:
@@ -451,21 +438,20 @@ async def get_device_history(
     result = await db.execute(stmt)
     return result.scalars().all()
 
-@router.get("/{device_id}/sensor-data", response_model=List[SensorDataRead])
+@router.get("/{sensor_type}/sensor-data", response_model=List[SensorDataRead])
 async def get_sensor_data(
-    device_id: str,
+    sensor_type: DeviceTypeEnum,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
     limit: int = 20,
 ):
     """Get recent sensor data for a specific device."""
-    # Ensure device exists
-    await _get_sensor_or_404(db, device_id)
-
     # Query sensor data ordered by newest first
+    if not sensor_type in [DeviceTypeEnum.TEMP_SENSOR, DeviceTypeEnum.HUMIDITY_SENSOR]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Device type is not compatible")
     stmt = (
         sa.select(SensorData)
-        .where(SensorData.device_id == device_id)
+        .where(SensorData.sensor_type==sensor_type)
         .order_by(SensorData.created_at.desc())
         .limit(limit)
     )

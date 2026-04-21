@@ -24,7 +24,8 @@ from app.schemas.face import (
     FaceEnrollmentRead,
     FaceRecognitionLogRead,
     FaceRecognizeResult,
-)
+) 
+from app.schemas.device import DeviceControlRequest
 
 logger = logging.getLogger(__name__)
 
@@ -432,8 +433,7 @@ async def recognize_face(
                 await mqtt_service.publish_command(
                     hardware_id=lock_device.hardware_id,
                     pin=lock_device.pin,
-                    is_on=True,
-                    value=float(settings.SERVO_OPEN_ANGLE),  # 90
+                    payload=DeviceControlRequest(is_on=True, value=float(settings.SERVO_OPEN_ANGLE))
                 )
                 door_unlocked = True
                 logger.info(

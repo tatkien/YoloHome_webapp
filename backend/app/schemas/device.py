@@ -66,7 +66,7 @@ class DeviceControlRequest(BaseModel):
 
 class SensorDataRead(BaseModel):
     id: int
-    device_id: str
+    device_id: Optional[str]
     value: float
     sensor_type: DeviceType
     created_at: datetime
