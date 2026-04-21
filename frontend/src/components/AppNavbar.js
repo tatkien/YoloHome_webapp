@@ -46,6 +46,11 @@ export default function AppNavbar() {
                     </NavDropdown.Item>
                   </NavDropdown>
                 )}
+
+                <Nav.Link as={Link} to="/schedules" active={isActive('/schedules')}>
+                  Schedules
+                </Nav.Link>             
+
                 {!isAdmin && (
                   <Nav.Link as={Link} to="/face/logs" active={isActive('/face/logs')}>
                     📋 Face Logs
