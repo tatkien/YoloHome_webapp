@@ -18,6 +18,11 @@ SQLAlchemy==2.0.48
 uvicorn==0.42.0
 watchfiles==1.1.1
 websockets==16.0
+faster-whisper==1.0.3
+requests==2.31.0
+scipy>=1.10.0
+tqdm>=4.65.0
+scikit-learn>=1.2.0
 
 # Test dependencies
 pytest==9.0.2

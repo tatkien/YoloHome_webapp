@@ -20,10 +20,8 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "multidisciplinaryproject"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
-    SECRET_KEY: str = "multidisciplinaryproject"
-    JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     DEBUG: bool = True
+    ADMIN_RESET_MODE: bool = False
     CORS_ORIGINS: str | list[str] = ["http://localhost:3000"]
     SETUP_CODE: str | None = None
 
@@ -43,6 +41,14 @@ class Settings(BaseSettings):
     # Servo angle presets
     SERVO_OPEN_ANGLE: int = 90
     SERVO_CLOSE_ANGLE: int = 0
+
+    # --- VOICE CONTROL ---
+    IP_WEBCAM_AUDIO_URL: str | None = None
+    WAKE_WORD: str = "hey_jarvis"  # Từ khoá đánh thức
+
+    # --- RETENTION SETTINGS ---
+    SENSOR_RETENTION_DAYS: int = 30  # Lưu lại dữ liệu cảm biến trong 30 ngày
+    LOG_RETENTION_DAYS: int = 7      # Lưu lại file log trong 7 ngày
 
     # --- MQTT CONFIGURATION ---
     MQTT_BROKER_URL: str = "localhost"

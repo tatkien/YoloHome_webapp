@@ -1,33 +1,53 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Container, Row, Col, Card, Button, Form, Modal, Alert, Spinner, Badge,
+  Container, Row, Col, Card, Button, Form, Modal, Alert, Spinner,
 } from 'react-bootstrap';
+import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
 
 const DEVICE_TYPES = [
   { value: 'light', label: '💡 Light', icon: '💡' },
   { value: 'fan', label: '🌀 Fan', icon: '🌀' },
   { value: 'camera', label: '📷 Camera', icon: '📷' },
+  { value: 'lock', label: '🔒 Lock (Servo)', icon: '🔒' },
   { value: 'temp_sensor', label: '🌡️ Temp Sensor', icon: '🌡️' },
   { value: 'humidity_sensor', label: '💧 Humidity Sensor', icon: '💧' },
 ];
+
+// Dedicated pin → type mapping
+const DEDICATED_PINS = { temp: 'temp_sensor', humi: 'humidity_sensor', servo: 'lock' };
 
 function deviceIcon(type) {
   const dt = DEVICE_TYPES.find((d) => d.value === type);
   return dt ? dt.icon : '📦';
 }
 
+function deviceUnit(type) {
+  if (type === 'temp_sensor') return '°C';
+  if (type === 'humidity_sensor') return '%';
+  if (type === 'fan') return ' speed';
+  return '';
+}
+
 export default function DevicesPage() {
+  const { isAdmin } = useAuth();
   const [devices, setDevices] = useState([]);
+  const [hardware, setHardware] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  // Create modal
+  // Create modal state
   const [showCreate, setShowCreate] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
-  const [newDevice, setNewDevice] = useState({ name: '', device_type: 'light', description: '' });
-  const [createdKey, setCreatedKey] = useState(null);
+  const [newDevice, setNewDevice] = useState({
+    name: '', type: 'light', room: '', hardware_id: '', pin: '',
+  });
+
+  // Device logs state
+  const [expandedLogs, setExpandedLogs] = useState({});
+  const [deviceLogs, setDeviceLogs] = useState({});
+  const [logsLoading, setLogsLoading] = useState({});
 
   const fetchDevices = useCallback(async () => {
     try {
@@ -41,22 +61,53 @@ export default function DevicesPage() {
     }
   }, []);
 
-  useEffect(() => { fetchDevices(); }, [fetchDevices]);
+  const fetchHardware = useCallback(async () => {
+    try {
+      const res = await api.get('/devices/hardware');
+      setHardware(res.data);
+    } catch {
+      // silent
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchDevices();
+    fetchHardware();
+  }, [fetchDevices, fetchHardware]);
+
+  // Get available pins for selected hardware
+  const selectedHw = hardware.find((h) => h.id === newDevice.hardware_id);
+  const allPins = selectedHw?.pins || [];
+  const usedPins = (selectedHw?.devices || []).map((d) => d.pin);
+  const availablePins = allPins.filter((p) => !usedPins.includes(p));
+
+  // Auto-set device type when a dedicated pin is selected
+  const handlePinChange = (pin) => {
+    const update = { ...newDevice, pin };
+    if (DEDICATED_PINS[pin]) {
+      update.type = DEDICATED_PINS[pin];
+    }
+    setNewDevice(update);
+  };
 
   const handleCreate = async (e) => {
     e.preventDefault();
     setError('');
     setCreateLoading(true);
     try {
-      const res = await api.post('/devices/', {
+      await api.post('/devices/', {
         name: newDevice.name,
-        device_type: newDevice.device_type,
-        description: newDevice.description || null,
+        type: newDevice.type,
+        room: newDevice.room || null,
+        hardware_id: newDevice.hardware_id,
+        pin: newDevice.pin,
       });
-      setCreatedKey(res.data.device_key);
       setSuccess(`Device "${newDevice.name}" created`);
-      setNewDevice({ name: '', device_type: 'light', description: '' });
+      setNewDevice({ name: '', type: 'light', room: '', hardware_id: '', pin: '' });
+      setShowCreate(false);
       fetchDevices();
+      fetchHardware();
+      setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to create device');
     } finally {
@@ -71,16 +122,41 @@ export default function DevicesPage() {
       await api.delete(`/devices/${id}`);
       setSuccess(`Device "${name}" deleted`);
       fetchDevices();
+      fetchHardware();
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to delete device');
     }
   };
 
+  const fetchLogs = async (deviceId) => {
+    if (expandedLogs[deviceId]) {
+      setExpandedLogs((prev) => ({ ...prev, [deviceId]: false }));
+      return;
+    }
+    setExpandedLogs((prev) => ({ ...prev, [deviceId]: true }));
+    setLogsLoading((prev) => ({ ...prev, [deviceId]: true }));
+    try {
+      const res = await api.get(`/devices/${deviceId}/history?limit=10`);
+      setDeviceLogs((prev) => ({ ...prev, [deviceId]: res.data }));
+    } catch {
+      setDeviceLogs((prev) => ({ ...prev, [deviceId]: [] }));
+    } finally {
+      setLogsLoading((prev) => ({ ...prev, [deviceId]: false }));
+    }
+  };
+
   const closeCreateModal = () => {
     setShowCreate(false);
-    setCreatedKey(null);
-    setNewDevice({ name: '', device_type: 'light', description: '' });
+    setNewDevice({ name: '', type: 'light', room: '', hardware_id: '', pin: '' });
+  };
+
+  const renderDeviceValue = (d) => {
+    if (d.type === 'lock') return d.is_on ? '🔓 Open' : '🔒 Locked';
+    if (d.type === 'light') return d.is_on ? '💡 On' : '⚫ Off';
+    if (d.type === 'camera') return d.is_on ? '🟢 Active' : '⚫ Off';
+    if (d.type === 'fan') return d.is_on ? `Speed ${Math.round(d.value)}` : 'Off';
+    return `${d.value}${deviceUnit(d.type)}`;
   };
 
   return (
@@ -90,7 +166,9 @@ export default function DevicesPage() {
           <h1>📡 Devices</h1>
           <p>Manage your smart home devices</p>
         </div>
-        <Button onClick={() => setShowCreate(true)}>+ Add Device</Button>
+        {isAdmin && (
+          <Button onClick={() => setShowCreate(true)}>+ Add Device</Button>
+        )}
       </div>
 
       {error && <Alert variant="danger" dismissible onClose={() => setError('')}>{error}</Alert>}
@@ -101,7 +179,7 @@ export default function DevicesPage() {
       ) : devices.length === 0 ? (
         <div className="text-center py-5" style={{ color: 'var(--text-muted)' }}>
           <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📡</div>
-          <p>No devices yet. Click "Add Device" to get started.</p>
+          <p>{isAdmin ? 'No devices yet. Click "Add Device" to get started.' : 'No devices configured. Ask admin to set up devices.'}</p>
         </div>
       ) : (
         <Row className="g-4">
@@ -110,35 +188,64 @@ export default function DevicesPage() {
               <Card className="h-100">
                 <Card.Body className="p-4">
                   <div className="d-flex justify-content-between align-items-start mb-3">
-                    <div style={{ fontSize: '2rem' }}>{deviceIcon(d.device_type)}</div>
-                    <span className="badge-device">{d.device_type}</span>
+                    <div style={{ fontSize: '2rem' }}>{deviceIcon(d.type)}</div>
+                    <span className="badge-device">{d.type}</span>
                   </div>
                   <Card.Title>{d.name}</Card.Title>
-                  <Card.Text style={{ fontSize: '0.85rem' }}>{d.description || 'No description'}</Card.Text>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
-                    <div>Slug: <code style={{ color: 'var(--accent-blue)' }}>{d.slug}</code></div>
-                    <div>Owner: #{d.owner_id}</div>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+                    <div>Room: {d.room || '—'}</div>
+                    <div>Pin: <code style={{ color: 'var(--accent-blue)' }}>{d.pin}</code></div>
+                    <div>Hardware: <code style={{ color: 'var(--accent-purple)' }}>{d.hardware_id}</code></div>
                     <div className="d-flex align-items-center gap-1 mt-1">
-                      Status: {d.is_active
-                        ? <Badge bg="success" style={{ fontSize: '0.7rem' }}>Active</Badge>
-                        : <Badge bg="secondary" style={{ fontSize: '0.7rem' }}>Inactive</Badge>
-                      }
+                      Value: <strong style={{ color: d.is_on ? 'var(--accent-green)' : 'var(--text-muted)' }}>
+                        {renderDeviceValue(d)}
+                      </strong>
                     </div>
                     {d.last_seen_at && (
                       <div>Last seen: {new Date(d.last_seen_at).toLocaleString()}</div>
                     )}
                   </div>
+
+                  {/* Device Logs accordion */}
+                  <Button variant="outline-dark" size="sm" className="w-100 mb-2"
+                    onClick={() => fetchLogs(d.id)}>
+                    {expandedLogs[d.id] ? '▲ Hide Logs' : '▼ Show Logs'}
+                  </Button>
+                  {expandedLogs[d.id] && (
+                    <div className="device-logs-panel">
+                      {logsLoading[d.id] ? (
+                        <div className="text-center py-2"><Spinner size="sm" animation="border" /></div>
+                      ) : (deviceLogs[d.id] || []).length === 0 ? (
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textAlign: 'center', padding: '0.5rem' }}>
+                          No logs yet
+                        </div>
+                      ) : (
+                        <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                          {(deviceLogs[d.id] || []).map((log) => (
+                            <div key={log.id} className="device-log-entry">
+                              <div style={{ fontSize: '0.78rem' }}>{log.action}</div>
+                              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                                {log.source} • {new Date(log.created_at).toLocaleString()}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </Card.Body>
-                <Card.Footer style={{ background: 'transparent', borderTop: '1px solid var(--border-color)', padding: '0.75rem 1.25rem' }}>
-                  <div className="d-flex justify-content-between align-items-center">
-                    <small style={{ color: 'var(--text-muted)' }}>
-                      {new Date(d.created_at).toLocaleDateString()}
-                    </small>
-                    <Button variant="danger" size="sm" onClick={() => handleDelete(d.id, d.name)}>
-                      Delete
-                    </Button>
-                  </div>
-                </Card.Footer>
+                {isAdmin && (
+                  <Card.Footer style={{ background: 'transparent', borderTop: '1px solid var(--border-color)', padding: '0.75rem 1.25rem' }}>
+                    <div className="d-flex justify-content-between align-items-center">
+                      <small style={{ color: 'var(--text-muted)' }}>
+                        {d.created_at ? new Date(d.created_at).toLocaleDateString() : ''}
+                      </small>
+                      <Button variant="danger" size="sm" onClick={() => handleDelete(d.id, d.name)}>
+                        Delete
+                      </Button>
+                    </div>
+                  </Card.Footer>
+                )}
               </Card>
             </Col>
           ))}
@@ -150,73 +257,86 @@ export default function DevicesPage() {
         <Modal.Header closeButton>
           <Modal.Title>Add New Device</Modal.Title>
         </Modal.Header>
-        {createdKey ? (
-          <>
-            <Modal.Body>
-              <Alert variant="warning" className="mb-3">
-                ⚠️ <strong>Save this device key now!</strong> It will only be shown once.
-              </Alert>
-              <div style={{
-                background: 'var(--bg-input)',
-                border: '1px solid var(--accent-yellow)',
-                borderRadius: 'var(--radius-sm)',
-                padding: '1rem',
-                fontFamily: 'monospace',
-                fontSize: '0.9rem',
-                wordBreak: 'break-all',
-                color: 'var(--accent-yellow)',
-              }}>
-                {createdKey}
-              </div>
-            </Modal.Body>
-            <Modal.Footer>
-              <Button onClick={closeCreateModal}>Done</Button>
-            </Modal.Footer>
-          </>
-        ) : (
-          <Form onSubmit={handleCreate}>
-            <Modal.Body>
-              <Form.Group className="mb-3">
-                <Form.Label>Device Name</Form.Label>
-                <Form.Control
-                  type="text"
-                  placeholder="e.g. Living Room Light"
-                  value={newDevice.name}
-                  onChange={(e) => setNewDevice({ ...newDevice, name: e.target.value })}
-                  required
-                  autoFocus
-                />
-              </Form.Group>
-              <Form.Group className="mb-3">
-                <Form.Label>Device Type</Form.Label>
-                <Form.Select
-                  value={newDevice.device_type}
-                  onChange={(e) => setNewDevice({ ...newDevice, device_type: e.target.value })}
-                >
-                  {DEVICE_TYPES.map((dt) => (
-                    <option key={dt.value} value={dt.value}>{dt.label}</option>
-                  ))}
-                </Form.Select>
-              </Form.Group>
-              <Form.Group className="mb-3">
-                <Form.Label>Description <small style={{ color: 'var(--text-muted)' }}>(optional)</small></Form.Label>
-                <Form.Control
-                  as="textarea"
-                  rows={2}
-                  placeholder="Brief description"
-                  value={newDevice.description}
-                  onChange={(e) => setNewDevice({ ...newDevice, description: e.target.value })}
-                />
-              </Form.Group>
-            </Modal.Body>
-            <Modal.Footer>
-              <Button variant="outline-light" onClick={closeCreateModal}>Cancel</Button>
-              <Button type="submit" disabled={createLoading}>
-                {createLoading ? <Spinner size="sm" animation="border" /> : 'Create Device'}
-              </Button>
-            </Modal.Footer>
-          </Form>
-        )}
+        <Form onSubmit={handleCreate}>
+          <Modal.Body>
+            <Form.Group className="mb-3">
+              <Form.Label>Hardware Board</Form.Label>
+              <Form.Select
+                value={newDevice.hardware_id}
+                onChange={(e) => setNewDevice({ ...newDevice, hardware_id: e.target.value, pin: '' })}
+                required
+              >
+                <option value="">Select hardware...</option>
+                {hardware.map((h) => (
+                  <option key={h.id} value={h.id}>{h.name} ({h.id})</option>
+                ))}
+              </Form.Select>
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Label>Pin</Form.Label>
+              <Form.Select
+                value={newDevice.pin}
+                onChange={(e) => handlePinChange(e.target.value)}
+                required
+                disabled={!newDevice.hardware_id}
+              >
+                <option value="">Select pin...</option>
+                {availablePins.map((p) => (
+                  <option key={p} value={p}>
+                    {p} {DEDICATED_PINS[p] ? `(→ ${DEDICATED_PINS[p]})` : ''}
+                  </option>
+                ))}
+              </Form.Select>
+              {newDevice.pin && DEDICATED_PINS[newDevice.pin] && (
+                <Form.Text style={{ color: 'var(--accent-yellow)' }}>
+                  This pin is dedicated to {DEDICATED_PINS[newDevice.pin]} — type auto-set.
+                </Form.Text>
+              )}
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Label>Device Type</Form.Label>
+              <Form.Select
+                value={newDevice.type}
+                onChange={(e) => setNewDevice({ ...newDevice, type: e.target.value })}
+                disabled={!!DEDICATED_PINS[newDevice.pin]}
+              >
+                {DEVICE_TYPES.map((dt) => (
+                  <option key={dt.value} value={dt.value}>{dt.label}</option>
+                ))}
+              </Form.Select>
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Label>Device Name</Form.Label>
+              <Form.Control
+                type="text"
+                placeholder="e.g. Living Room Light"
+                value={newDevice.name}
+                onChange={(e) => setNewDevice({ ...newDevice, name: e.target.value })}
+                required
+                autoFocus
+              />
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Label>Room <small style={{ color: 'var(--text-muted)' }}>(optional)</small></Form.Label>
+              <Form.Control
+                type="text"
+                placeholder="e.g. Living Room"
+                value={newDevice.room}
+                onChange={(e) => setNewDevice({ ...newDevice, room: e.target.value })}
+              />
+            </Form.Group>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="outline-dark" onClick={closeCreateModal}>Cancel</Button>
+            <Button type="submit" disabled={createLoading}>
+              {createLoading ? <Spinner size="sm" animation="border" /> : 'Create Device'}
+            </Button>
+          </Modal.Footer>
+        </Form>
       </Modal>
     </Container>
   );

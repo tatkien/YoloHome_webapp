@@ -8,34 +8,47 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import api_router
 from app.service.mqtt import mqtt_service
 from app.core.config import settings
-from app.core.face_service import get_face_service
+from app.ai.face_service import get_face_service
 from app.realtime.scheduler import run_device_schedule_loop
+from app.realtime.voice_stream import voice_streamer_service
+from app.ai.voice_logic import voice_logic_service
+from app.db.db_utils import handle_admin_reset
+from app.db.session import AsyncSessionLocal
+from app.core.logger import logger, logging_middleware
 
 
-# Ensure application module logs (e.g. app.core.face_service) emit INFO-level records.
-logging.getLogger("app").setLevel(logging.INFO)
+# Ensure application module logs emit records.
+logger.setLevel(logging.INFO)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Khởi tạo Face Service
     get_face_service()
+    
+    # Kiểm tra cứu hộ Admin
+    async with AsyncSessionLocal() as db:
+        await handle_admin_reset(db)
     stop_event = asyncio.Event()
 
-    # Start MQTT and scheduler in parallel
+    # Khởi chạy song song MQTT, Scheduler, Thu Âm và AI STT
     mqtt_task = asyncio.create_task(mqtt_service.connect_and_subscribe())
     schedule_task = asyncio.create_task(run_device_schedule_loop(stop_event))
+    voice_task = asyncio.create_task(voice_streamer_service.start())
+    logic_task = asyncio.create_task(voice_logic_service.start())
     try:
         yield
     finally:
-        print("Shutting down server, cleaning up resources...")
+        logger.info("Đang tắt server, dọn dẹp tài nguyên...")
         stop_event.set()
         await schedule_task
+        await voice_logic_service.stop()
+        await voice_streamer_service.stop()
         mqtt_task.cancel()
         try:
-            if mqtt_service.client:
-                await mqtt_service.client.disconnect()
-        except Exception as e:
-                print(f"Error disconnecting MQTT client: {e}")
+            await mqtt_task
+        except asyncio.CancelledError:
+            pass
 
 app = FastAPI(
     title="YoloHome API",
@@ -53,6 +66,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.middleware("http")(logging_middleware)
 
 app.include_router(api_router, prefix="/api/v1")
 

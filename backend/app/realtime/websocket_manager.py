@@ -1,6 +1,7 @@
 import asyncio
 from collections import defaultdict
 from fastapi import WebSocket
+from app.core.logger import logger
 
 class ConnectionManager:
     def __init__(self):
@@ -49,7 +50,7 @@ class ConnectionManager:
                 ws_failed = targets[i]
                 if ws_failed in self.active_connections[user_id]:
                     self.active_connections[user_id].remove(ws_failed)
-                print(f"DEBUG: Removed stale WS for user {user_id} due to: {result}")
+                logger.debug(f"WS Cleanup: Removed stale connection for user {user_id} due to: {result}")
         
         # Final cleanup check
         if not self.active_connections[user_id]:

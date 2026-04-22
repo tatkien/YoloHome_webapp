@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import api from '../services/api';
+import { useRealtimeWebSocket } from '../hooks/useRealtimeWebSocket';
 
 const AuthContext = createContext(null);
 
@@ -56,6 +57,8 @@ export function AuthProvider({ children }) {
   }, []);
 
   const isAdmin = user?.role === 'admin';
+
+  useRealtimeWebSocket(token);
 
   return (
     <AuthContext.Provider value={{ user, token, loading, login, register, logout, isAdmin }}>

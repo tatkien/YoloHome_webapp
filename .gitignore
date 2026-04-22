@@ -38,6 +38,11 @@ Thumbs.db
 models/*
 !models/prepare.py
 !models/requirements.txt
+whisper_cache/
+openwakeword_cache/
 
-# Logs
+
+# Logs and Uploads
 backend/uploads/*
+backend/logs/
+*.log

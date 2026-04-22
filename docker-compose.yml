@@ -39,6 +39,8 @@ services:
     volumes:
       - ./backend:/app
       - ./models:/models:ro
+      - ./whisper_cache:/root/.cache/huggingface
+      - backend_deps:/app/node_modules
 
   frontend:
     build:
@@ -56,7 +58,7 @@ services:
     command: ["npx", "react-scripts", "start"]
     volumes:
       - ./frontend:/app
-      - /app/node_modules
+      - frontend_modules:/app/node_modules
     
   mqtt:
     image: eclipse-mosquitto:2
@@ -72,3 +74,5 @@ volumes:
   postgres_data:
   mosquitto_data:
   mosquitto_log:
+  frontend_modules:
+  backend_deps:

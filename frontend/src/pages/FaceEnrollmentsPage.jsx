@@ -4,11 +4,40 @@ import {
 } from 'react-bootstrap';
 import api from '../services/api';
 
+const DEVICE_TYPE_LABELS = {
+  camera: 'Camera',
+  temp_sensor: 'Temperature',
+  humidity_sensor: 'Humidity',
+  light: 'Light',
+  fan: 'Fan',
+  lock: 'Lock',
+};
+
+const getFriendlyDeviceName = (device) => {
+  if (!device) return 'Device';
+
+  if (device.type && DEVICE_TYPE_LABELS[device.type]) {
+    return DEVICE_TYPE_LABELS[device.type];
+  }
+
+  const raw = `${device.name || ''}`.toLowerCase();
+  if (raw.includes('camera')) return 'Camera';
+  if (raw.includes('temp')) return 'Temperature';
+  if (raw.includes('humi')) return 'Humidity';
+  if (raw.includes('light')) return 'Light';
+  if (raw.includes('fan')) return 'Fan';
+  if (raw.includes('lock')) return 'Lock';
+
+  return device.name || 'Device';
+};
+
 export default function FaceEnrollmentsPage() {
   const [enrollments, setEnrollments] = useState([]);
+  const [devices, setDevices] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [usersLoading, setUsersLoading] = useState(false);
+  const [devicesLoading, setDevicesLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [filterDeviceId, setFilterDeviceId] = useState('');
@@ -22,13 +51,14 @@ export default function FaceEnrollmentsPage() {
   // Enroll modal
   const [showEnroll, setShowEnroll] = useState(false);
   const [enrollUserId, setEnrollUserId] = useState('');
-  const [enrollDeviceId, setEnrollDeviceId] = useState('');
   const [enrollFile, setEnrollFile] = useState(null);
   const [enrollPreview, setEnrollPreview] = useState(null);
   const [enrollInputMode, setEnrollInputMode] = useState('upload');
+  const [cameraDevice, setCameraDevice] = useState(null);
   const [cameraLoading, setCameraLoading] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
   const [enrollLoading, setEnrollLoading] = useState(false);
+  const [enrollError, setEnrollError] = useState('');
   const fileInputRef = useRef(null);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -59,8 +89,33 @@ export default function FaceEnrollmentsPage() {
     }
   }, []);
 
+  const fetchDevices = useCallback(async () => {
+    try {
+      setDevicesLoading(true);
+      const res = await api.get('/devices/get-camera-devices');
+      setDevices(res.data || []);
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to load devices');
+    } finally {
+      setDevicesLoading(false);
+    }
+  }, []);
+
   useEffect(() => { fetchEnrollments(); }, [fetchEnrollments]);
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
+  useEffect(() => { fetchDevices(); }, [fetchDevices]);
+
+  // Fetch camera device for enrollment
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await api.get('/face/camera');
+        setCameraDevice(res.data.camera);
+      } catch {
+        setCameraDevice(null);
+      }
+    })();
+  }, []);
 
   useEffect(() => () => {
     if (selectedEnrollmentImageUrl) {
@@ -76,7 +131,6 @@ export default function FaceEnrollmentsPage() {
     const playPromise = videoRef.current.play();
     if (playPromise && typeof playPromise.catch === 'function') {
       playPromise.catch(() => {
-        // Autoplay can be blocked in some browsers even with muted playback.
       });
     }
   }, [cameraActive, enrollInputMode]);
@@ -155,21 +209,21 @@ export default function FaceEnrollmentsPage() {
 
   const handleEnroll = async (e) => {
     e.preventDefault();
+    setEnrollError('');
     if (!enrollUserId) {
-      setError('Please select a registered user');
+      setEnrollError('Please select a registered user');
       return;
     }
     if (!enrollFile) {
-      setError('Please select an image file');
+      setEnrollError('Please select an image file');
       return;
     }
-    setError('');
     setEnrollLoading(true);
     try {
       const formData = new FormData();
       formData.append('image', enrollFile);
       formData.append('user_id', enrollUserId);
-      if (enrollDeviceId) formData.append('device_id', enrollDeviceId);
+      formData.append('device_id', cameraDevice.id);
 
       await api.post('/face/enrollments/image', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -182,7 +236,7 @@ export default function FaceEnrollmentsPage() {
       fetchEnrollments();
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
-      setError(err.response?.data?.detail || 'Enrollment failed');
+      setEnrollError(err.response?.data?.detail || 'Enrollment failed');
     } finally {
       setEnrollLoading(false);
     }
@@ -245,21 +299,26 @@ export default function FaceEnrollmentsPage() {
   const resetEnrollForm = () => {
     stopCamera();
     setEnrollUserId('');
-    setEnrollDeviceId('');
     setEnrollFile(null);
     setEnrollPreview(null);
     setEnrollInputMode('upload');
     setCameraLoading(false);
+    setEnrollError('');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+  };
+
+  const getDeviceLabelById = (deviceId) => {
+    const found = devices.find((d) => String(d.id) === String(deviceId));
+    return found ? getFriendlyDeviceName(found) : 'Unknown device';
   };
 
   return (
     <Container className="py-4 fade-in">
       <div className="d-flex justify-content-between align-items-start mb-4">
         <div className="page-header" style={{ marginBottom: 0 }}>
-          <h1>🧑 Face Enrollments</h1>
+          <h1>Face Enrollments</h1>
           <p>Register known faces for recognition</p>
         </div>
         <Button onClick={() => setShowEnroll(true)}>+ Enroll Face</Button>
@@ -272,18 +331,19 @@ export default function FaceEnrollmentsPage() {
       <div className="yh-card p-3 mb-4">
         <Row className="align-items-end">
           <Col md={4}>
-            <Form.Label>Filter by Device ID</Form.Label>
-            <Form.Control
-              type="number"
-              placeholder="All devices"
+            <Form.Label>Filter by Device</Form.Label>
+            <Form.Select
               value={filterDeviceId}
               onChange={(e) => setFilterDeviceId(e.target.value)}
-            />
-          </Col>
-          <Col md={2}>
-            <Button variant="outline-light" onClick={() => setFilterDeviceId('')} className="w-100">
-              Clear
-            </Button>
+              disabled={devicesLoading}
+            >
+              <option value="">All devices</option>
+              {devices.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {getFriendlyDeviceName(d)}
+                </option>
+              ))}
+            </Form.Select>
           </Col>
         </Row>
       </div>
@@ -304,11 +364,8 @@ export default function FaceEnrollmentsPage() {
             <Table hover>
               <thead>
                 <tr>
-                  <th>ID</th>
-                  <th>Image</th>
                   <th>User</th>
                   <th>Device</th>
-                  <th>Vector Dim</th>
                   <th>Created</th>
                   <th></th>
                 </tr>
@@ -316,38 +373,38 @@ export default function FaceEnrollmentsPage() {
               <tbody>
                 {enrollments.map((e) => (
                   <tr key={e.id}>
-                    <td>{e.id}</td>
-                    <td>
-                      <Button
-                        variant="outline-light"
-                        size="sm"
-                        disabled={!e.image_path}
-                        onClick={() => openEnrollmentImage(e)}
-                      >
-                        Show Image
-                      </Button>
-                    </td>
                     <td style={{ fontWeight: 600 }}>
                       {e.user_name || `User #${e.user_id}`}
                       {e.user_id ? (
                         <small style={{ color: 'var(--text-muted)', marginLeft: '0.4rem' }}>#{e.user_id}</small>
                       ) : null}
                     </td>
-                    <td>{e.device_id ?? <span style={{ color: 'var(--text-muted)' }}>Global</span>}</td>
                     <td>
-                      <span className="badge-device">{e.feature_vector?.length || 0}d</span>
+                      {e.device_id
+                        ? getDeviceLabelById(e.device_id)
+                        : <span style={{ color: 'var(--text-muted)' }}>Global</span>}
                     </td>
                     <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                       {new Date(e.created_at).toLocaleString()}
                     </td>
                     <td>
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        onClick={() => handleDelete(e.id, e.user_name || `User #${e.user_id}`)}
-                      >
-                        Delete
-                      </Button>
+                      <div className="d-flex gap-2 justify-content-end">
+                        <Button
+                          variant="outline-dark"
+                          size="sm"
+                          onClick={() => openEnrollmentImage(e)}
+                          disabled={!e.image_path}
+                        >
+                          Preview
+                        </Button>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={() => handleDelete(e.id, e.user_name || `User #${e.user_id}`)}
+                        >
+                          Delete
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -364,6 +421,11 @@ export default function FaceEnrollmentsPage() {
         </Modal.Header>
         <Form onSubmit={handleEnroll}>
           <Modal.Body>
+            {enrollError && (
+              <Alert variant="danger" dismissible onClose={() => setEnrollError('')}>
+                {enrollError}
+              </Alert>
+            )}
             <Row>
               <Col md={6}>
                 <Form.Group className="mb-3">
@@ -387,20 +449,31 @@ export default function FaceEnrollmentsPage() {
                   )}
                 </Form.Group>
                 <Form.Group className="mb-3">
-                  <Form.Label>Device ID <small style={{ color: 'var(--text-muted)' }}>(optional)</small></Form.Label>
-                  <Form.Control
-                    type="number"
-                    placeholder="Scope to a specific device"
-                    value={enrollDeviceId}
-                    onChange={(e) => setEnrollDeviceId(e.target.value)}
-                  />
+                  <Form.Label>Camera Device</Form.Label>
+                  {cameraDevice ? (
+                    <div style={{
+                      background: 'var(--bg-input)', border: '1px solid var(--border-color)',
+                      borderRadius: 'var(--radius-sm)', padding: '0.65rem 1rem',
+                      color: 'var(--accent-green)', fontWeight: 600,
+                    }}>
+                      📷 Camera
+                    </div>
+                  ) : (
+                    <div style={{
+                      background: 'var(--bg-input)', border: '1px solid var(--accent-red)',
+                      borderRadius: 'var(--radius-sm)', padding: '0.65rem 1rem',
+                      color: 'var(--accent-red)',
+                    }}>
+                      No camera device found. Add a camera device first.
+                    </div>
+                  )}
                 </Form.Group>
                 <Form.Group className="mb-3">
                   <Form.Label>Face Photo</Form.Label>
                   <div className="d-flex gap-2 mb-2">
                     <Button
                       type="button"
-                      variant={enrollInputMode === 'upload' ? 'primary' : 'outline-light'}
+                      variant={enrollInputMode === 'upload' ? 'primary' : 'outline-dark'}
                       onClick={() => {
                         stopCamera();
                         setEnrollInputMode('upload');
@@ -410,24 +483,26 @@ export default function FaceEnrollmentsPage() {
                     </Button>
                     <Button
                       type="button"
-                      variant={enrollInputMode === 'webcam' ? 'primary' : 'outline-light'}
+                      variant={enrollInputMode === 'webcam' ? 'primary' : 'outline-dark'}
                       onClick={startCamera}
                       disabled={cameraLoading}
                     >
                       {cameraLoading ? 'Starting camera...' : 'Use Webcam'}
                     </Button>
                     {cameraActive && (
-                      <Button type="button" variant="outline-light" onClick={captureFromWebcam}>Capture</Button>
+                      <Button type="button" variant="outline-dark" onClick={captureFromWebcam}>Capture</Button>
                     )}
                   </div>
                   <div
-                    className={`file-upload-zone ${enrollFile ? 'has-file' : ''}`}
+                    className={`border rounded p-4 text-center ${enrollFile ? 'border-success bg-success bg-opacity-10' : 'border-secondary bg-light'} d-flex flex-column justify-content-center align-items-center`}
                     onClick={() => {
-                      if (enrollInputMode === 'upload' && fileInputRef.current) {
+                      stopCamera();
+                      setEnrollInputMode('upload');
+                      if (fileInputRef.current) {
                         fileInputRef.current.click();
                       }
                     }}
-                    style={{ cursor: enrollInputMode === 'webcam' ? 'default' : 'pointer' }}
+                    style={{ cursor: 'pointer', minHeight: '150px', transition: 'all 0.2s' }}
                   >
                     <input
                       type="file"
@@ -484,25 +559,45 @@ export default function FaceEnrollmentsPage() {
                 ) : (
                   <div style={{
                     width: '100%',
-                    height: '200px',
+                    height: '300px',
                     background: 'var(--bg-input)',
                     borderRadius: 'var(--radius)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     color: 'var(--text-muted)',
+                    overflow: 'hidden',
+                    position: 'relative',
+                    border: '1px solid var(--border-color, #ccc)' 
                   }}>
-                    Image preview
+                    {error ? (
+                      <span style={{ fontSize: '14px' }}>Camera unavailable</span>
+                    ) : (
+                      <video
+                        ref={videoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        style={{
+                          width: '105%',
+                          height: '300px',
+                          objectFit: 'cover',
+                          transform: 'scaleX(-1)', 
+                          backgroundColor: '#000',
+                          border: '1px solid black'
+                        }}
+                      />
+                    )}
                   </div>
                 )}
               </Col>
             </Row>
           </Modal.Body>
           <Modal.Footer>
-            <Button type="button" variant="outline-light" onClick={() => { setShowEnroll(false); resetEnrollForm(); }}>
+            <Button type="button" variant="outline-dark" onClick={() => { setShowEnroll(false); resetEnrollForm(); }}>
               Cancel
             </Button>
-            <Button type="submit" disabled={enrollLoading || !enrollFile || !enrollUserId}>
+            <Button type="submit" disabled={enrollLoading || !enrollFile || !enrollUserId || !cameraDevice}>
               {enrollLoading ? <Spinner size="sm" animation="border" /> : 'Enroll Face'}
             </Button>
           </Modal.Footer>

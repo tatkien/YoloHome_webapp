@@ -7,17 +7,17 @@ from datetime import datetime, timezone
 import cv2
 import numpy as np
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_admin_user, get_current_user
 from app.core.config import settings
-from app.core.face_service import FaceService, get_face_service
+from app.ai.face_service import FaceService, get_face_service
 from app.core.security import verify_secret
 from app.db.db_utils import reset_sequence_to_min_gap
 from app.db.session import get_db
-from app.models.device import Device
+from app.models.device import Device, DeviceTypeEnum
 from app.models.face_enrollment import FaceEnrollment
 from app.models.face_recognition_log import FaceRecognitionLog
 from app.models.user import User
@@ -25,7 +25,8 @@ from app.schemas.face import (
     FaceEnrollmentRead,
     FaceRecognitionLogRead,
     FaceRecognizeResult,
-)
+) 
+from app.schemas.device import DeviceControlRequest
 
 logger = logging.getLogger(__name__)
 
@@ -93,13 +94,51 @@ async def _get_user_or_404(db: AsyncSession, user_id: int) -> User:
     return user
 
 
+async def _get_camera_or_404(db: AsyncSession, device_id: str) -> Device:
+    """Validate that device_id is an existing camera device."""
+    result = await db.execute(sa.select(Device).where(Device.id == device_id))
+    device = result.scalar_one_or_none()
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    if device.type != DeviceTypeEnum.CAMERA:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Device is not a camera",
+        )
+    return device
+
+
+# ---------------------------------------------------------------------------
+# Camera device endpoint (for frontend auto-detection)
+# ---------------------------------------------------------------------------
+
+@router.get("/camera", summary="Get currently available camera device")
+async def get_camera_device(
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns the first camera device if one exists, or null."""
+    result = await db.execute(
+        sa.select(Device).where(Device.type == DeviceTypeEnum.CAMERA).limit(1)
+    )
+    camera = result.scalar_one_or_none()
+    if not camera:
+        return {"camera": None}
+    return {
+        "camera": {
+            "id": camera.id,
+            "name": camera.name,
+            "hardware_id": camera.hardware_id,
+        }
+    }
+
+
 # ---------------------------------------------------------------------------
 # Enrollment  (register a known face → store its feature vector)
 # ---------------------------------------------------------------------------
 
 @router.get("/enrollments", response_model=list[FaceEnrollmentRead])
 async def list_enrollments(
-    device_id: int | None = None,
+    device_id: str | None = None,
     user_id: int | None = None,
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -143,12 +182,13 @@ async def list_enrollments(
 async def create_enrollment_from_image(
     image: UploadFile = File(..., description="Photo containing the face to enroll"),
     user_id: int = Form(..., description="ID of the registered user"),
-    device_id: int | None = Form(default=None, description="Optional device scope"),
+    device_id: str = Form(..., description="Camera device ID (required)"),
     _: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
     face_service: FaceService = Depends(get_face_service),
 ):
     user = await _get_user_or_404(db, user_id)
+    await _get_camera_or_404(db, device_id)
 
     if image.content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(
@@ -177,6 +217,10 @@ async def create_enrollment_from_image(
         )
 
     image_path = _save_enrollment_image(contents, image.filename)
+
+    # Keep sequence aligned with current gaps right before INSERT to avoid duplicates
+    # after a previously reused ID.
+    await reset_sequence_to_min_gap(db, "face_enrollments", "face_enrollments_id_seq")
 
     enrollment = FaceEnrollment(
         user_id=user_id,
@@ -215,7 +259,6 @@ async def delete_enrollment(
     _remove_file_if_exists(enrollment.image_path)
     await db.delete(enrollment)
     await db.commit()
-    # await reset_sequence_to_min_gap(db, "face_enrollments", "face_enrollments_id_seq")
 
 
 # ---------------------------------------------------------------------------
@@ -229,13 +272,13 @@ async def delete_enrollment(
     summary="Submit a camera image for face recognition",
     description=(
         "Runs RetinaFace detection, aligns the face, extracts the ArcFace embedding, "
-        "and matches against enrolled faces using cosine similarity (pgvector)."
+        "and matches against enrolled faces using cosine similarity (pgvector). "
+        "On recognition success, automatically sends an unlock command to the servo/lock device."
     ),
 )
 async def recognize_face(
     image: UploadFile = File(..., description="JPEG / PNG / WebP image from the camera"),
-    device_id: int | None = Form(default=None, description="ID of the submitting device"),
-    x_device_key: str | None = Header(default=None, alias="X-Device-Key"),
+    device_id: str = Form(..., description="Camera device ID (required)"),
     db: AsyncSession = Depends(get_db),
     face_service: FaceService = Depends(get_face_service),
 ):
@@ -246,21 +289,8 @@ async def recognize_face(
             detail="Only JPEG, PNG, and WebP images are accepted",
         )
 
-    # --- Authenticate device (if provided) ---
-    if device_id is not None:
-        if not x_device_key:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="X-Device-Key header is required when device_id is provided",
-            )
-        result = await db.execute(sa.select(Device).where(Device.id == device_id))
-        device = result.scalar_one_or_none()
-        if device is None or not device.is_active or not verify_secret(x_device_key, device.key_hash):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid device credentials",
-            )
-        device.last_seen_at = datetime.now(timezone.utc)
+    # --- Validate camera device ---
+    camera_device = await _get_camera_or_404(db, device_id)
 
     # --- Save image to disk ---
     os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -316,7 +346,6 @@ async def recognize_face(
         )
 
     # --- Gate on detection quality ---
-    # Low detection scores produce unreliable embeddings; skip matching.
     if det_score < settings.FACE_DETECTION_THRESHOLD:
         log = FaceRecognitionLog(
             device_id=device_id,
@@ -344,8 +373,6 @@ async def recognize_face(
     confidence = None
     rec_status = "unknown"
 
-    # pgvector cosine distance: 1 - cosine_similarity
-    # So cosine_similarity = 1 - cosine_distance
     cosine_dist_col = FaceEnrollment.feature_vector.cosine_distance(embedding_list)
 
     match_query = sa.select(
@@ -355,68 +382,15 @@ async def recognize_face(
         User.full_name,
         cosine_dist_col.label("distance"),
     ).join(User, FaceEnrollment.user_id == User.id, isouter=True)
-    if device_id is not None:
-        match_query = match_query.where(
-            sa.or_(
-                FaceEnrollment.device_id == device_id,
-                FaceEnrollment.device_id.is_(None),
-            )
+    # Scope to enrollments for this camera device (or unscoped)
+    match_query = match_query.where(
+        sa.or_(
+            FaceEnrollment.device_id == device_id,
+            FaceEnrollment.device_id.is_(None),
         )
+    )
     match_query = match_query.order_by(cosine_dist_col).limit(1)
-    # Debug: print query plan to terminal to see if HNSW ANN index is used.
-    # Use explicit SQL + CAST(:embedding AS vector) to avoid asyncpg '$1' explain binding issues.
-    if settings.DEBUG:
-        try:
-            # Isolate debug SQL in a savepoint so failures do not poison the request transaction.
-            async with db.begin_nested():
-                embedding_text = "[" + ",".join(f"{float(v):.8f}" for v in embedding_list) + "]"
-                if device_id is None:
-                    explain_sql = sa.text(
-                        """
-                        EXPLAIN (ANALYZE, BUFFERS)
-                        SELECT
-                            fe.id,
-                            fe.user_id,
-                            u.username,
-                            u.full_name,
-                            fe.feature_vector <=> CAST(:embedding AS vector) AS distance
-                        FROM face_enrollments fe
-                        LEFT JOIN users u ON fe.user_id = u.id
-                        ORDER BY fe.feature_vector <=> CAST(:embedding AS vector)
-                        LIMIT 1
-                        """
-                    )
-                    plan_rows = await db.execute(explain_sql, {"embedding": embedding_text})
-                else:
-                    explain_sql = sa.text(
-                        """
-                        EXPLAIN (ANALYZE, BUFFERS)
-                        SELECT
-                            fe.id,
-                            fe.user_id,
-                            u.username,
-                            u.full_name,
-                            fe.feature_vector <=> CAST(:embedding AS vector) AS distance
-                        FROM face_enrollments fe
-                        LEFT JOIN users u ON fe.user_id = u.id
-                        WHERE (fe.device_id = :device_id OR fe.device_id IS NULL)
-                        ORDER BY fe.feature_vector <=> CAST(:embedding AS vector)
-                        LIMIT 1
-                        """
-                    )
-                    plan_rows = await db.execute(
-                        explain_sql,
-                        {"embedding": embedding_text, "device_id": device_id},
-                    )
-                plan_lines = [row[0] for row in plan_rows.fetchall()]
 
-            ann_used = any("face_enrollments_vector_hnsw" in line.lower() for line in plan_lines)
-            print("Face recognize query plan: ANN(HNSW) used = %s", ann_used)
-            for line in plan_lines:
-                print("[VECTOR PLAN] %s", line)
-        except Exception:
-            logger.exception("Failed to EXPLAIN face vector match query")
-            
     match_result = await db.execute(match_query)
     best_match = match_result.first()
 
@@ -444,6 +418,35 @@ async def recognize_face(
     await db.commit()
     await db.refresh(log)
 
+    # --- Auto-unlock door on recognition ---
+    door_unlocked = False
+    if rec_status == "recognized" and camera_device.hardware_id:
+        try:
+            lock_result = await db.execute(
+                sa.select(Device).where(
+                    Device.hardware_id == camera_device.hardware_id,
+                    Device.type == DeviceTypeEnum.LOCK,
+                )
+            )
+            lock_device = lock_result.scalar_one_or_none()
+            if lock_device:
+                from app.service.command_service import device_command
+                await device_command(
+                    db=db,
+                    device_id=lock_device.id,
+                    is_on=True,
+                    value=float(settings.SERVO_OPEN_ANGLE),
+                    actor=str(matched_user_id) if matched_user_id else "AutoUnlock",
+                    source="Face Auto-Unlock"
+                )
+                door_unlocked = True
+                logger.info(
+                    f"[Face] Auto-unlock: sent servo open command (angle={settings.SERVO_OPEN_ANGLE}) "
+                    f"for lock device {lock_device.id} on hardware {lock_device.hardware_id}"
+                )
+        except Exception:
+            logger.exception("[Face] Failed to send auto-unlock command")
+
     return FaceRecognizeResult(
         log_id=log.id,
         status=rec_status,
@@ -454,12 +457,13 @@ async def recognize_face(
         bbox=bbox.tolist(),
         detection_score=round(float(det_score), 4),
         anti_spoof_score=round(float(anti_spoof_score), 4),
+        door_unlocked=door_unlocked,
     )
 
 
 @router.get("/logs", response_model=list[FaceRecognitionLogRead], summary="List recognition log entries")
 async def list_recognition_logs(
-    device_id: int | None = None,
+    device_id: str | None = None,
     limit: int = 100,
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

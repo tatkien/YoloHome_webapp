@@ -9,8 +9,8 @@ import RegisterPage from './pages/RegisterPage';
 import DevicesPage from './pages/DevicesPage';
 import AdminUsersPage from './pages/AdminUsersPage';
 import FaceEnrollmentsPage from './pages/FaceEnrollmentsPage';
-import FaceRecognizePage from './pages/FaceRecognizePage';
 import FaceLogsPage from './pages/FaceLogsPage';
+import DeviceSchedulesPage from './pages/DeviceSchedulesPage';
 
 function App() {
   return (
@@ -28,11 +28,13 @@ function App() {
 
           {/* Face Recognition */}
           <Route path="/face/enrollments" element={<PrivateRoute adminOnly><FaceEnrollmentsPage /></PrivateRoute>} />
-          <Route path="/face/recognize" element={<FaceRecognizePage />} />
           <Route path="/face/logs" element={<PrivateRoute><FaceLogsPage /></PrivateRoute>} />
 
           {/* Admin */}
           <Route path="/admin/users" element={<PrivateRoute adminOnly><AdminUsersPage /></PrivateRoute>} />
+
+          <Route path="/schedules" element={<PrivateRoute><DeviceSchedulesPage /></PrivateRoute>} />
+            
         </Routes>
       </AuthProvider>
     </Router>
