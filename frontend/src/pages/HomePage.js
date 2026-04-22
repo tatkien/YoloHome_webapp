@@ -49,32 +49,52 @@ const CustomTooltip = ({ active, payload, label }) => {
 function SensorChart({ sensor, color }) {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [range, setRange] = useState('1h'); // Default to 1 hour
   const unit = DEVICE_UNITS[sensor.type] || '';
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await api.get(`/devices/${sensor.type}/sensor-data`, { params: { limit: 20 } });
+      setLoading(true);
+      // Fixed API path to match Backend: /devices/sensor-data?sensor_type=...&range=...
+      const res = await api.get('/devices/sensor-data', { 
+        params: { 
+          sensor_type: sensor.type,
+          range: range 
+        } 
+      });
+      
       // API returns newest-first, reverse for chronological display
-      const points = [...res.data].reverse().map((item) => ({
-        time: formatTime(item.created_at),
-        value: parseFloat(item.value),
-        raw: item.created_at,
-      }));
+      const points = [...res.data].reverse().map((item) => {
+        const d = new Date(item.created_at);
+        let timeLabel = formatTime(item.created_at);
+        
+        // If range is long, add date to label
+        if (range === '7d') {
+          timeLabel = `${d.getDate()}/${d.getMonth() + 1} ${timeLabel}`;
+        }
+
+        return {
+          time: timeLabel,
+          value: parseFloat(item.value),
+          raw: item.created_at,
+        };
+      });
       setData(points);
     } catch {
       /* silent */
     } finally {
       setLoading(false);
     }
-  }, [sensor.type]);
+  }, [sensor.type, range]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  /* Listen to WS updates and append new point */
+  /* Listen to WS updates and append new point (only if in 1h range) */
   useEffect(() => {
     const handler = (e) => {
       const payload = e.detail;
       if (
+        range === '1h' && // Only live update if looking at recent data
         payload.event === 'sensor_update' &&
         payload.hardware_id === sensor.hardware_id &&
         payload.data[sensor.pin] !== undefined
@@ -86,33 +106,52 @@ function SensorChart({ sensor, color }) {
         };
         setData((prev) => {
           const next = [...prev, newPoint];
-          return next.length > 20 ? next.slice(next.length - 20) : next;
+          // Keep a reasonable number of points for live view
+          return next.length > 50 ? next.slice(next.length - 50) : next;
         });
       }
     };
     window.addEventListener('yolohome:ws', handler);
     return () => window.removeEventListener('yolohome:ws', handler);
-  }, [sensor.hardware_id, sensor.pin]);
+  }, [sensor.hardware_id, sensor.pin, range]);
 
   const latestValue = data.length > 0 ? data[data.length - 1].value : sensor.value;
-  const minVal = data.length > 0 ? Math.min(...data.map(d => d.value)) : null;
-  const maxVal = data.length > 0 ? Math.max(...data.map(d => d.value)) : null;
+  const minVal = data.length > 0 ? Math.min(...data.map(d => d.value)) : 0;
+  const maxVal = data.length > 0 ? Math.max(...data.map(d => d.value)) : 0;
 
   return (
     <Card className="shadow-sm border h-100">
-      <Card.Header className="bg-white border-bottom d-flex justify-content-between align-items-center">
+      <Card.Header className="bg-white border-bottom d-flex flex-wrap justify-content-between align-items-center gap-2">
         <div className="d-flex align-items-center gap-2">
           <span>{DEVICE_ICONS[sensor.type] || '📊'}</span>
           <span className="fw-semibold small">{sensor.name}</span>
-          <Badge bg="light" text="dark" className="border small">{sensor.room || 'No room'}</Badge>
+          <Badge bg="light" text="dark" className="border small d-none d-sm-inline-block">{sensor.room || 'No room'}</Badge>
         </div>
+        
+        {/* Time Range Selector */}
         <div className="d-flex align-items-center gap-2">
-          <span className="fw-bold" style={{ color, fontSize: '1.1rem' }}>
-            {latestValue != null ? `${latestValue}${unit}` : '—'}
-          </span>
-          <Badge bg={sensor.is_on ? 'success' : 'secondary'} className="small">
-            {sensor.is_on ? 'ON' : 'OFF'}
-          </Badge>
+          <ButtonGroup size="sm" className="me-2 shadow-sm">
+            {[
+              { id: '1h', label: '1H' },
+              { id: '24h', label: '24H' },
+              { id: '7d', label: '7D' },
+            ].map((r) => (
+              <Button
+                key={r.id}
+                variant={range === r.id ? 'primary' : 'outline-secondary'}
+                onClick={() => setRange(r.id)}
+                style={{ fontSize: '0.65rem', padding: '2px 8px' }}
+              >
+                {r.label}
+              </Button>
+            ))}
+          </ButtonGroup>
+
+          <div className="d-flex align-items-center gap-2">
+            <span className="fw-bold" style={{ color, fontSize: '1.1rem' }}>
+              {latestValue != null ? `${latestValue}${unit}` : '—'}
+            </span>
+          </div>
         </div>
       </Card.Header>
 

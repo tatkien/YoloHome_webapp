@@ -246,18 +246,19 @@ async def get_camera_devices(
 async def get_sensor_data_history(
     device_id: Optional[str] = Query(None, description="Filter by specific device ID"),
     sensor_type: Optional[DeviceTypeEnum] = Query(None, description="Filter by sensor type (temp_sensor, humidity_sensor)"),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=1000),
+    time_range: Optional[str] = Query(None, alias="range", description="Time range (1h, 24h, 7d)"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     """
-    Unified endpoint to get sensor data history.
-    Can filter by device_id, sensor_type, or both.
+    Unified endpoint to get sensor data history with optional time range filtering.
     """
+    from datetime import datetime, timedelta
+    
     stmt = sa.select(SensorData)
     
     if device_id:
-        # Optional: verify device exists
         await _get_device_or_404(db, device_id)
         stmt = stmt.where(SensorData.device_id == device_id)
         
@@ -269,7 +270,19 @@ async def get_sensor_data_history(
             )
         stmt = stmt.where(SensorData.sensor_type == sensor_type)
 
-    stmt = stmt.order_by(SensorData.created_at.desc()).limit(limit)
+    if time_range:
+        now = datetime.utcnow()
+        if time_range == "1h":
+            stmt = stmt.where(SensorData.created_at >= now - timedelta(hours=1))
+        elif time_range == "24h":
+            stmt = stmt.where(SensorData.created_at >= now - timedelta(hours=24))
+        elif time_range == "7d":
+            stmt = stmt.where(SensorData.created_at >= now - timedelta(days=7))
+        # When range is provided, we might want to return more points than the default limit
+        stmt = stmt.order_by(SensorData.created_at.desc()).limit(2000) 
+    else:
+        stmt = stmt.order_by(SensorData.created_at.desc()).limit(limit)
+
     result = await db.execute(stmt)
     return result.scalars().all()
 
