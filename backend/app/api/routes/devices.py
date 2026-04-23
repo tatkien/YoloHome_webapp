@@ -8,9 +8,9 @@ from app.db.db_utils import reset_sequence_to_min_gap
 from app.models.device import Device, DeviceTypeEnum
 from app.models.user import User
 
-from app.schemas.device import DeviceRead, DeviceUpdate, DeviceCreate, DeviceControlRequest, SensorDataRead
+from app.schemas.device import DeviceRead, DeviceUpdate, DeviceCreate, DeviceControlRequest, SensorDataRead, DeviceLogRead
 from app.schemas.schedule import DeviceScheduleCreate, DeviceScheduleUpdate, DeviceScheduleRead
-from app.models.device import HardwareNode, SensorData
+from app.models.device import HardwareNode, SensorData, DeviceLog
 from app.models.device_schedule import DeviceSchedule
 from app.schemas.hardware import HardwareNodeRead
 from app.realtime.websocket_manager import realtime_manager
@@ -285,6 +285,27 @@ async def get_sensor_data_history(
 
     result = await db.execute(stmt)
     return result.scalars().all()
+
+# History endpoint PHẢI đứng trước /{device_id} để tránh bị match nhầm
+@router.get("/{device_id}/history", response_model=List[DeviceLogRead])
+async def get_device_history(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """Lấy nhật ký hoạt động gần nhất của một thiết bị."""
+    await _get_device_or_404(db, device_id)
+
+    stmt = (
+        sa.select(DeviceLog)
+        .where(DeviceLog.device_id == device_id)
+        .order_by(DeviceLog.created_at.desc())
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
 
 @router.get("/{device_id}", response_model=DeviceRead)
 async def read_device(

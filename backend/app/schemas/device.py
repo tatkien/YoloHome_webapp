@@ -40,7 +40,16 @@ class DeviceRead(DeviceBase):
     last_seen_at: Optional[datetime] = None
     model_config = ConfigDict(from_attributes=True)
 
+class DeviceLogRead(BaseModel):
+    id: int
+    device_id: Optional[str] = None
+    device_name: str
+    action: str
+    actor: Optional[str] = None
+    source: Optional[str] = None
+    created_at: datetime
 
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DeviceControlRequest(BaseModel):

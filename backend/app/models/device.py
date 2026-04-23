@@ -67,8 +67,22 @@ class Device(Base):
 
         return value
 
+class DeviceLog(Base):
+    """Store device activity history."""
 
+    __tablename__ = "device_logs"
 
+    id = sa.Column(sa.Integer, primary_key=True, index=True)
+    device_id = sa.Column(
+        sa.String(64), sa.ForeignKey("devices.id", ondelete="CASCADE")
+    )
+    device_name = sa.Column(sa.String(128), nullable=False)
+    action = sa.Column(sa.String(255), nullable=False)
+    actor = sa.Column(sa.String(128), nullable=True)
+    source = sa.Column(sa.String(128), nullable=True)
+    created_at = sa.Column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), index=True
+    )
 
 class SensorData(Base):
     """Store time-series data for sensors."""

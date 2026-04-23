@@ -47,8 +47,10 @@ class Settings(BaseSettings):
     WAKE_WORD: str = "hey_jarvis"  # Từ khoá đánh thức
 
     # --- RETENTION SETTINGS ---
-    SENSOR_RETENTION_DAYS: int = 30  # Lưu lại dữ liệu cảm biến trong 30 ngày
-    LOG_RETENTION_DAYS: int = 7      # Lưu lại file log trong 7 ngày
+    SENSOR_RETENTION_DAYS: int = 30       # Lưu lại dữ liệu cảm biến trong 30 ngày
+    DEVICE_LOG_RETENTION_DAYS: int = 30   # Lưu lại nhật ký thiết bị trong 30 ngày
+    LOG_RETENTION_DAYS: int = 7           # Lưu lại file log trong 7 ngày
+
 
     # --- MQTT CONFIGURATION ---
     MQTT_BROKER_URL: str = "localhost"

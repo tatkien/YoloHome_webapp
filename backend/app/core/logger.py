@@ -63,7 +63,31 @@ async def add_history_record(
     db = None
 ):
     """
-    Helper to log system activity records to yolohome.log.
+    Ghi nhật ký hành động thiết bị vào cả log file và bảng device_logs trong DB.
     """
     log_msg = f"[HISTORY] Device: {device_name} ({device_id}) | Action: {action} | Actor: {actor} | Source: {source}"
     logger.info(log_msg)
+
+    # Không ghi DB cho các bản cập nhật cảm biến (tránh trùng với sensor_data)
+    SENSOR_PREFIXES = ("[Sensor]",)
+    if any(action.startswith(p) for p in SENSOR_PREFIXES):
+        return
+
+    # Ghi vào bảng device_logs
+    from app.db.session import AsyncSessionLocal
+    from app.models.device import DeviceLog
+
+    async with AsyncSessionLocal() as session:
+        try:
+            new_log = DeviceLog(
+                device_id=device_id,
+                device_name=device_name,
+                action=action,
+                actor=str(actor),
+                source=source,
+            )
+            session.add(new_log)
+            await session.commit()
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"[History] Không thể ghi nhật ký vào DB cho thiết bị {device_name}: {e}")

@@ -12,7 +12,7 @@ from app.ai.face_service import get_face_service
 from app.realtime.scheduler import run_device_schedule_loop
 from app.realtime.voice_stream import voice_streamer_service
 from app.ai.voice_logic import voice_logic_service
-from app.db.db_utils import handle_admin_reset
+from app.service.maintenance import handle_admin_reset
 from app.db.session import AsyncSessionLocal
 from app.core.logger import logger, logging_middleware
 
