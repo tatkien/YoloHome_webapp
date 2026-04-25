@@ -41,12 +41,11 @@ async def user_global_stream(
     # 1. Authenticate and resolve user
     user = await authenticate_ws_user(token)
 
-    # 2. Accept connection and register in manager
-    await realtime_manager.connect_user(user.id, websocket)
-    await websocket.send_json({"type": "connection.ready", "user_id": user.id})
-
     # 3. Keep connection alive with idle timeout
     try:
+        # 2. Accept connection and register in manager
+        await realtime_manager.connect_user(user.id, websocket)
+        await websocket.send_json({"type": "connection.ready", "user_id": user.id})
         while True:
             # Wait for message with 60s timeout — client must ping every 30s
             data = await asyncio.wait_for(

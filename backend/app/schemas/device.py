@@ -36,8 +36,8 @@ class DeviceUpdate(BaseModel):
 
 class DeviceRead(DeviceBase):
     id: str
-    is_on: bool
-    value: float
+    is_on: Optional[bool] = None
+    value: Optional[float] = None
     last_seen_at: Optional[datetime] = None
     model_config = ConfigDict(from_attributes=True)
 
