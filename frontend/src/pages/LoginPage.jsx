@@ -5,10 +5,20 @@ import { Alert, Badge, ButtonGroup, Card, Col, Container, ProgressBar, Row, Spin
 import { HiEye, HiEyeOff } from 'react-icons/hi';
 import api from '../services/api';
 
-const MAX_FRAMES = 3;
+const FRAMES_PER_ATTEMPT = 3;
+const MAX_ATTEMPTS = 3;
+const MAX_FRAMES = FRAMES_PER_ATTEMPT * MAX_ATTEMPTS;
 const WARMUP_MS = 1000;
 const FRAME_INTERVAL_MS = 180;
+const SPOOF_RESET_MS = 15000;
 const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+const normalizeStatus = (status) => {
+  const s = String(status || '').toLowerCase();
+  if (s === 'recognized') return 'recognized';
+  if (s.includes('spoof')) return 'spoof';
+  return 'unknown';
+};
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -38,6 +48,7 @@ export default function LoginPage() {
   const captureCanvasRef = useRef(null);
   const canvasRef = useRef(null);
   const imgRef = useRef(null);
+  const spoofResetTimerRef = useRef(null);
 
   const statusText = (result?.status || '').toLowerCase();
   const isRecognized = statusText === 'recognized';
@@ -91,6 +102,30 @@ export default function LoginPage() {
     drawCanvas();
   }, [preview, result, drawCanvas]);
 
+  useEffect(() => {
+    if (!spoofDetected) {
+      if (spoofResetTimerRef.current) {
+        window.clearTimeout(spoofResetTimerRef.current);
+        spoofResetTimerRef.current = null;
+      }
+      return;
+    }
+
+    spoofResetTimerRef.current = window.setTimeout(() => {
+      setSpoofDetected(false);
+      setResult(null);
+      setPhaseText(cameraOn ? 'Camera ready' : 'Camera is off');
+      spoofResetTimerRef.current = null;
+    }, SPOOF_RESET_MS);
+
+    return () => {
+      if (spoofResetTimerRef.current) {
+        window.clearTimeout(spoofResetTimerRef.current);
+        spoofResetTimerRef.current = null;
+      }
+    };
+  }, [spoofDetected, cameraOn]);
+
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
@@ -102,6 +137,13 @@ export default function LoginPage() {
   }, []);
 
   useEffect(() => () => stopCamera(), [stopCamera]);
+
+  useEffect(() => () => {
+    if (spoofResetTimerRef.current) {
+      window.clearTimeout(spoofResetTimerRef.current);
+      spoofResetTimerRef.current = null;
+    }
+  }, []);
 
   const startCamera = useCallback(async () => {
     if (streamRef.current) return;
@@ -162,38 +204,82 @@ export default function LoginPage() {
       await sleep(WARMUP_MS);
 
       let lastResponse = null;
-      for (let i = 1; i <= MAX_FRAMES; i++) {
-        setCurrentFrame(i);
-        setPhaseText(`Capturing frame ${i}/${MAX_FRAMES}...`);
-        const { blob, dataUrl } = await captureFrame();
-        setPreview(dataUrl);
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        const attemptResponses = [];
+        const attemptStatuses = [];
 
-        setPhaseText(`Sending frame ${i}/${MAX_FRAMES}...`);
-        const response = await submitFrame(blob, i);
-        lastResponse = response;
+        for (let frame = 1; frame <= FRAMES_PER_ATTEMPT; frame++) {
+          const globalFrame = (attempt - 1) * FRAMES_PER_ATTEMPT + frame;
+          setCurrentFrame(globalFrame);
+          setPhaseText(`Attempt ${attempt}/${MAX_ATTEMPTS}: capturing frame ${frame}/${FRAMES_PER_ATTEMPT}...`);
+          const { blob, dataUrl } = await captureFrame();
+          setPreview(dataUrl);
 
-        if (response.status === 'recognized') {
-          setResult(response);
-          setPhaseText(`✅ Recognized!${response.door_unlocked ? ' Door unlocked!' : ''}`);
+          setPhaseText(`Attempt ${attempt}/${MAX_ATTEMPTS}: sending frame ${frame}/${FRAMES_PER_ATTEMPT}...`);
+          const response = await submitFrame(blob, globalFrame);
+          lastResponse = response;
+          attemptResponses.push(response);
+          const normalizedStatus = normalizeStatus(response.status);
+          attemptStatuses.push(normalizedStatus);
+
+          // New rule: if any single frame is spoof, stop immediately.
+          if (normalizedStatus === 'spoof') {
+            setResult(response);
+            setSpoofDetected(true);
+            setPhaseText('⚠️ Spoof detected. Retry available in 15s...');
+            stopCamera();
+            return;
+          }
+
+          if (!(attempt === MAX_ATTEMPTS && frame === FRAMES_PER_ATTEMPT)) {
+            await sleep(FRAME_INTERVAL_MS);
+          }
+        }
+
+        const hasRecognized = attemptStatuses.includes('recognized');
+
+        if (hasRecognized) {
+          const recognizedResponse =
+            attemptResponses.find((r) => normalizeStatus(r.status) === 'recognized')
+            || attemptResponses[attemptResponses.length - 1];
+          setResult(recognizedResponse);
+          setPhaseText(`✅ Recognized`);
           stopCamera();
-          setFaceLoading(false);
           return;
         }
 
-        if (response.status?.toLowerCase().includes('spoof')) {
-          setResult(response);
-          setSpoofDetected(true);
-          setPhaseText('⚠️ Spoof detected.');
+        if (!hasRecognized) {
+          if (attempt < MAX_ATTEMPTS) {
+            continue;
+          }
+
+          const finalResponse = attemptResponses[attemptResponses.length - 1];
+          setResult({
+            ...(finalResponse || {}),
+            status: 'unknown',
+            confidence: null,
+            matched_enrollment_id: null,
+            matched_user_id: null,
+            matched_user_name: null,
+            door_unlocked: false,
+          });
+          setPhaseText('No match found after 3 attempts. Final result: Unknown.');
           stopCamera();
-          setFaceLoading(false);
           return;
         }
-
-        if (i < MAX_FRAMES) await sleep(FRAME_INTERVAL_MS);
       }
 
-      setResult(lastResponse);
-      setPhaseText('No match found.');
+      setResult({
+        ...(lastResponse || {}),
+        status: 'unknown',
+        confidence: null,
+        matched_enrollment_id: null,
+        matched_user_id: null,
+        matched_user_name: null,
+        door_unlocked: false,
+      });
+      setPhaseText('No match found after 3 attempts. Final result: Unknown.');
+      stopCamera();
     } catch (err) {
       setFaceError(err.response?.data?.detail || err.message || 'Recognition failed');
     } finally {
@@ -203,6 +289,10 @@ export default function LoginPage() {
   };
 
   const resetFace = () => {
+    if (spoofResetTimerRef.current) {
+      window.clearTimeout(spoofResetTimerRef.current);
+      spoofResetTimerRef.current = null;
+    }
     setPreview(null);
     setResult(null);
     setFaceError('');
