@@ -29,7 +29,6 @@ class DeviceCreate(DeviceBase):
 class DeviceUpdate(BaseModel):
     name: Optional[str] = None
     room: Optional[str] = None
-    type: Optional[DeviceType] = None
     description: Optional[str] = None
     meta_data: Optional[Dict[str, Any]] = None
 
