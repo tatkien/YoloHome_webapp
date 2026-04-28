@@ -5,7 +5,7 @@ import logging
 import openwakeword
 from collections import deque
 from openwakeword.model import Model
-from app.realtime.voice_stream import voice_streamer_service
+from app.workers.voice_stream import voice_streamer_service
 from app.service.voice_intent import process_voice_intent
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
@@ -23,7 +23,7 @@ class VoiceLogicService:
         self.oww_model = None
         self.is_running = False
         self._task = None
-        self.inferring = False # Cờ bảo vệ để tránh chạy song song nhiều Whisper
+        self.inferring = False # Cờ để tránh chạy song song nhiều Whisper
         
     def load_models(self):
         """Nạp các mô hình AI trong thread riêng."""

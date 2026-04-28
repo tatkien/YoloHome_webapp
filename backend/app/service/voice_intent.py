@@ -43,7 +43,7 @@ async def process_voice_intent(db: AsyncSession, sentence: str) -> bool:
             break
             
     if not found_action:
-        logger.debug(f"[VoiceIntent] Vứt bỏ (Không thấy động từ): '{sentence}'")
+        logger.debug(f"[VoiceIntent] Loại bỏ (Không thấy từ hành động): '{sentence}'")
         return False
         
     # 2. Tìm thiết bị khớp
@@ -73,26 +73,35 @@ async def process_voice_intent(db: AsyncSession, sentence: str) -> bool:
         return False
         
     # 3. Tính toán thông số gửi lệnh
-    is_on = True
-    value = 1023
+    is_on = None
+    value = None
     
     if found_action == "ON":
         is_on = True
-        value = 1023
     elif found_action == "OFF":
         is_on = False
-        value = 0
-    elif found_action == "UP":
-        is_on = True
-        # Ví dụ đơn giản: cộng thêm 200 đơn vị (Mạch YoloBit max 1023)
-        value = min(1023, target_device.value + 200)
-    elif found_action == "DOWN":
-        value = max(0, target_device.value - 200)
-        if value <= 0:
-            is_on = False
-            value = 0
+    elif found_action in ["UP", "DOWN"]:
+        if target_device.type != "fan":
+            logger.debug(f"[VoiceIntent] Lệnh {found_action} bị từ chối vì {target_device.name} không phải là quạt.")
+            return False
             
-    logger.info(f"[VoiceIntent] TRÍCH XUẤT Ý ĐỊNH THÀNH CÔNG: Lệnh={'BẬT' if is_on else 'TẮT'} ({value}) | Device= {target_device.name}")
+        meta = target_device.meta_data or {}
+        range_val = meta.get("range", [0, 1023])
+        min_v, max_v = range_val[0], range_val[1]
+        
+        # Bước nhảy mặc định là 20% của dải giá trị (hoặc 200 nếu max là 1023)
+        step = max_v * 0.2 if max_v > 0 else 200
+        
+        if found_action == "UP":
+            is_on = True
+            value = min(max_v, target_device.value + step)
+        else: # DOWN
+            value = max(min_v, target_device.value - step)
+            if value <= 0:
+                is_on = False
+                value = 0
+                
+    logger.info(f"[VoiceIntent] Trích xuất ý định thành công: Lệnh={'BẬT' if is_on else 'TẮT'} (Value: {value}) | Device= {target_device.name}")
     
     # Gửi lệnh
     try:

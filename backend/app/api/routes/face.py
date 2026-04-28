@@ -17,7 +17,8 @@ from app.ai.face_service import FaceService, get_face_service
 from app.core.security import verify_secret
 from app.db.db_utils import reset_sequence_to_min_gap
 from app.db.session import get_db
-from app.models.device import Device, DeviceTypeEnum
+from app.models.device import Device
+from app.schemas.device import DeviceType
 from app.models.face_enrollment import FaceEnrollment
 from app.models.face_recognition_log import FaceRecognitionLog
 from app.models.user import User
@@ -100,7 +101,7 @@ async def _get_camera_or_404(db: AsyncSession, device_id: str) -> Device:
     device = result.scalar_one_or_none()
     if device is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
-    if device.type != DeviceTypeEnum.CAMERA:
+    if device.type != DeviceType.CAMERA:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Device is not a camera",
@@ -118,7 +119,7 @@ async def get_camera_device(
 ):
     """Returns the first camera device if one exists, or null."""
     result = await db.execute(
-        sa.select(Device).where(Device.type == DeviceTypeEnum.CAMERA).limit(1)
+        sa.select(Device).where(Device.type == DeviceType.CAMERA).limit(1)
     )
     camera = result.scalar_one_or_none()
     if not camera:
@@ -425,7 +426,7 @@ async def recognize_face(
             lock_result = await db.execute(
                 sa.select(Device).where(
                     Device.hardware_id == camera_device.hardware_id,
-                    Device.type == DeviceTypeEnum.LOCK,
+                    Device.type == DeviceType.LOCK,
                 )
             )
             lock_device = lock_result.scalar_one_or_none()

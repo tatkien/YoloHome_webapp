@@ -1,12 +1,8 @@
 """Database utility helpers shared across route modules."""
 
 import re
-
 import sqlalchemy as sa
-import logging
 from sqlalchemy.ext.asyncio import AsyncSession
-
-logger = logging.getLogger("yolohome")
 
 _SIMPLE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -93,27 +89,3 @@ async def reset_sequence_to_min_gap(
             """
         )
     )
-
-async def handle_admin_reset(db: AsyncSession) -> None:
-    """Permanently delete all admin accounts if ADMIN_RESET_MODE is enabled.
-    
-    This provides a 'fail-safe' or 'factory reset' for admin access.
-    """
-    from app.models.user import User
-    from app.core.config import settings
-
-    if not settings.ADMIN_RESET_MODE:
-        return
-
-    logger.warning("!!! [RESCUE] Chế độ ADMIN_RESET_MODE đang BẬT. Đang xóa các tài khoản admin cũ...")
-    
-    # Delete all admins
-    result = await db.execute(sa.delete(User).where(User.role == "admin"))
-    deleted_count = result.rowcount
-    
-    await db.commit()
-    
-    if deleted_count > 0:
-        logger.info(f"!!! [RESCUE] Đã xóa thành công {deleted_count} tài khoản admin. Hệ thống đã sẵn sàng để đăng ký lại.")
-    else:
-        logger.info("!!! [RESCUE] Không tìm thấy tài khoản admin nào để xóa. Hệ thống đã sẵn sàng để đăng ký lại.")

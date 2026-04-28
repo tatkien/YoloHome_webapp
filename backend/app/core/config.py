@@ -37,10 +37,13 @@ class Settings(BaseSettings):
     # --- HARDWARE SETTINGS ---
     # Auto-close delay for lock servo
     SERVO_AUTO_CLOSE_DELAY_MS: int = 5000 
-    
-    # Servo angle presets
-    SERVO_OPEN_ANGLE: int = 90
-    SERVO_CLOSE_ANGLE: int = 0
+
+    DEFAULT_DEVICE_METADATA: dict[str, dict] = {
+        "fan": {"default_value": 1.0, "range": [0, 3], "unit": "speed"},
+        "light": {"default_value": 1023.0, "range": [0, 1023], "unit": "brighness"},
+        "lock": {"default_value": 90.0, "range": [0, 90], "unit": "degree"},
+        "camera": {"default_value": 1.0, "range": [0, 1], "unit": "state"}
+    }
 
     # --- VOICE CONTROL ---
     IP_WEBCAM_AUDIO_URL: str | None = None

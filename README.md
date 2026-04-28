@@ -1,6 +1,6 @@
 # YoloHome Web App
 
-YoloHome is a smart-home platform with real-time device control, scheduling, MQTT hardware integration, and face recognition.
+YoloHome is a smart-home platform with real-time device control, AI voice commands, automated scheduling, MQTT hardware integration, and face recognition security.
 
 ## Tech Stack
 
@@ -11,7 +11,8 @@ YoloHome is a smart-home platform with real-time device control, scheduling, MQT
 | Database        | PostgreSQL (pgvector image in Docker) |
 | Messaging       | MQTT (Eclipse Mosquitto)              |
 | Realtime        | WebSocket (JWT-authenticated)         |
-| Migrations      | Alembic                               |
+| AI Models       | OpenWakeWord, Whisper, RetinaFace, ArcFace |
+| Task Scheduling | APScheduler                           |
 | Containers      | Docker + Docker Compose               |
 | Hardware Script | MicroPython (YoloBit)                 |
 
@@ -19,17 +20,18 @@ YoloHome is a smart-home platform with real-time device control, scheduling, MQT
 
 ## Repository Structure
 
-```
+```text
 YoloHome_webapp/
 ├── backend/
 │   ├── app/
-│   │   ├── api/routes/         # auth, users, devices, face, ws
-│   │   ├── core/               # config, security, face service
-│   │   ├── db/                 # async session + db utils
+│   │   ├── ai/                 # Face recognition, voice logic, and NLP intent
+│   │   ├── api/routes/         # Auth, users, devices, face, ws
+│   │   ├── core/               # Config, security, logger
+│   │   ├── db/                 # Async session, utils, init_db
 │   │   ├── models/             # ORM models
 │   │   ├── schemas/            # Pydantic schemas
-│   │   ├── realtime/           # websocket manager + scheduler loop
-│   │   └── service/            # MQTT service, history
+│   │   ├── service/            # Core business logic (device, command, history, ws, mqtt)
+│   │   └── workers/            # Background tasks (scheduler, voice_stream)
 │   ├── alembic/
 │   ├── Dockerfile
 │   └── requirements.txt
@@ -40,8 +42,8 @@ YoloHome_webapp/
 │   ├── src/services/
 │   ├── Dockerfile
 │   └── package.json
-├── models/                     # face model files + prepare script
-├── yolobit_microPython/        # hardware script for YoloBit
+├── models/                     # Face model files + prepare script
+├── yolobit_microPython/        # Hardware script for YoloBit
 ├── docker-compose.yml
 ├── mosquitto.conf
 └── .env.example
@@ -124,66 +126,27 @@ npm start
 
 ---
 
-## API Overview (Current)
+## MQTT Integration
 
-Base URL: `/api/v1`
+The system uses 4 specific MQTT topics for bi-directional communication with hardware nodes:
 
-### Auth
-
-- `POST /auth/login`
-- `POST /auth/register`
-- `GET /auth/me`
-
-### Users (Admin)
-
-- `GET /admin/users/`
-- `PUT /admin/users/invitation-key`
-- `DELETE /admin/users/{user_id}`
-
-### Devices + Hardware
-
-- `GET /devices/hardware`
-- `GET /devices/hardware/{hardware_id}`
-- `DELETE /devices/hardware/{hardware_id}`
-- `POST /devices/`
-- `GET /devices/`
-- `GET /devices/get-camera-devices`
-- `GET /devices/{device_id}`
-- `PATCH /devices/{device_id}`
-- `DELETE /devices/{device_id}`
-- `POST /devices/{device_id}/command`
-- `GET /devices/{device_id}/history`
-- `GET /devices/{sensor_type}/sensor-data`
-
-### Device Schedules
-
-- `POST /devices/{device_id}/schedules`
-- `GET /devices/{device_id}/schedules`
-- `PUT /devices/schedules/{schedule_id}`
-- `DELETE /devices/schedules/{schedule_id}`
-
-### Face Recognition
-
-- `GET /face/camera`
-- `GET /face/enrollments`
-- `POST /face/enrollments/image`
-- `DELETE /face/enrollments/{enrollment_id}`
-- `GET /face/enrollments/{enrollment_id}/image`
-- `POST /face/recognize`
-- `GET /face/logs`
-- `GET /face/logs/{log_id}/image`
-
-### WebSocket
-
-- `WS /api/v1/ws?token=<jwt>`
+1. **Announce Topic:** `smart_home/hardware/<MAC_ADDRESS>/announce`
+   - Hardware sends its capabilities and pin configurations to register with the backend.
+2. **Sensor Topic:** `smart_home/hardware/<MAC_ADDRESS>/sensor`
+   - Hardware continuously publishes environmental data (e.g., temperature, humidity).
+3. **State Topic:** `smart_home/hardware/<MAC_ADDRESS>/state`
+   - Hardware acknowledges command execution and reports its current state (e.g., LED is ON, Servo is at 90 degrees).
+4. **Command Topic:** `smart_home/hardware/<MAC_ADDRESS>/command`
+   - Backend sends control instructions to the hardware.
 
 ---
 
 ## Realtime Behavior
 
-- Frontend opens one global WebSocket connection.
+- Frontend opens one global WebSocket connection via `WS /api/v1/ws?token=<jwt>`.
 - Client sends `{ "type": "ping" }` every 30 seconds.
 - Server closes idle sockets after 60 seconds if no messages are received.
+- Real-time updates (sensor data, device state changes, scheduled triggers) are pushed through this connection.
 
 ## Environment Variables
 
@@ -191,6 +154,8 @@ Copy [.env.example](.env.example) to `.env` and adjust as needed. Core values in
 
 - `DATABASE_URL`
 - `SECRET_KEY`
+- `WAKE_WORD`
+- `IP_WEBCAM_AUDIO_URL`
 - `JWT_ALGORITHM`
 - `ACCESS_TOKEN_EXPIRE_MINUTES`
 - `CORS_ORIGINS`
@@ -199,3 +164,4 @@ Copy [.env.example](.env.example) to `.env` and adjust as needed. Core values in
 - `MQTT_PORT`
 - `ARCFACE_MODEL_PATH`
 - `RETINAFACE_MODEL_PATH`
+- `ADMIN_RESET_MODE`

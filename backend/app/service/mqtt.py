@@ -1,10 +1,8 @@
 import json
 import asyncio
 import aiomqtt
-from typing import Dict, Any, Optional
-from app.core.device_handle import DeviceHandler
+from app.service.device_handle import DeviceHandler
 from app.core.config import settings
-from app.schemas.device import DeviceControlRequest
 from app.core.logger import logger
 
 class MQTTService:
@@ -86,29 +84,22 @@ class MQTTService:
         except Exception as e:
             logger.error(f"[MQTT Service] Lỗi khi xử lý tin nhắn: {e}")
 
-    async def publish_command(self, hardware_id: str, pin: str, payload: DeviceControlRequest):
-        """Public API method: enqueue command instead of publishing directly."""
-        topic = f"smart_home/hardware/{hardware_id}/command"
-        # Guess value based on is_on and reverse-guessing logic in DeviceHandler
-        if payload.is_on is None:
-            payload.is_on = payload.value > 0
-        elif payload.value is None:
-            payload.value = payload.is_on   # Light, fan, servo: 0 or 1
-        
-        if not payload.value.is_integer():
-            raise ValueError("Value must be an integer") # Camera, fan speed, light and servo only accept integer values
+    async def publish_command(self, hardware_id: str, pin: str, payload: dict):
+        """Đưa lệnh vào queue để gửi mqtt đi. Payload ở đây đã được xử lý từ command_service"""
 
+        topic = f"smart_home/hardware/{hardware_id}/command"
         command_payload = {
             "pin": pin,
-            "is_on": payload.is_on,
-            "value": int(payload.value)
+            **payload  # Giải nén dict {'is_on': bool, 'value': int}
         }
         
-        # Enqueue command for publisher worker
+        # Đưa vào Queue
         await self.command_queue.put({
             "topic": topic,
             "payload": json.dumps(command_payload)
         })
+
+        logger.info(f"[MQTT Queue] Đã đưa lệnh vào hàng đợi cho Pin: {pin}")
         return True
 
 # Service singleton instance

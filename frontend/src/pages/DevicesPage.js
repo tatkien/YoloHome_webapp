@@ -14,8 +14,6 @@ const DEVICE_TYPES = [
   { value: 'humidity_sensor', label: '💧 Humidity Sensor', icon: '💧' },
 ];
 
-// Dedicated pin → type mapping
-const DEDICATED_PINS = { temp: 'temp_sensor', humi: 'humidity_sensor', servo: 'lock' };
 
 function deviceIcon(type) {
   const dt = DEVICE_TYPES.find((d) => d.value === type);
@@ -78,14 +76,18 @@ export default function DevicesPage() {
   // Get available pins for selected hardware
   const selectedHw = hardware.find((h) => h.id === newDevice.hardware_id);
   const allPins = selectedHw?.pins || [];
-  const usedPins = (selectedHw?.devices || []).map((d) => d.pin);
-  const availablePins = allPins.filter((p) => !usedPins.includes(p));
+  const usedPins = devices
+    .filter((d) => d.hardware_id === newDevice.hardware_id)
+    .map((d) => d.pin);
+  const selectedPinObj = allPins.find((p) => p.pin === newDevice.pin);
+  const isTypeFixed = selectedPinObj && selectedPinObj.type !== 'unknown';
 
   // Auto-set device type when a dedicated pin is selected
-  const handlePinChange = (pin) => {
-    const update = { ...newDevice, pin };
-    if (DEDICATED_PINS[pin]) {
-      update.type = DEDICATED_PINS[pin];
+  const handlePinChange = (pinName) => {
+    const pinObj = allPins.find((p) => p.pin === pinName);
+    const update = { ...newDevice, pin: pinName };
+    if (pinObj && pinObj.type !== 'unknown') {
+      update.type = pinObj.type;
     }
     setNewDevice(update);
   };
@@ -282,15 +284,26 @@ export default function DevicesPage() {
                 disabled={!newDevice.hardware_id}
               >
                 <option value="">Select pin...</option>
-                {availablePins.map((p) => (
-                  <option key={p} value={p}>
-                    {p} {DEDICATED_PINS[p] ? `(→ ${DEDICATED_PINS[p]})` : ''}
-                  </option>
-                ))}
+                {allPins.map((pObj) => {
+                  const isUsed = usedPins.includes(pObj.pin);
+                  return (
+                    <option 
+                      key={pObj.pin} 
+                      value={pObj.pin} 
+                      disabled={isUsed}
+                    >        
+                      {pObj.pin} 
+                      {pObj.type !== 'unknown' ? ` (Detected: ${pObj.type})` : ''}
+                      {isUsed ? ' — [In use]' : ''}
+                    </option>
+                  );
+                })}
               </Form.Select>
-              {newDevice.pin && DEDICATED_PINS[newDevice.pin] && (
-                <Form.Text style={{ color: 'var(--accent-yellow)' }}>
-                  This pin is dedicated to {DEDICATED_PINS[newDevice.pin]} — type auto-set.
+
+              {isTypeFixed && (
+                <Form.Text className="text-warning d-block mt-1">
+                  This pin is pre-configured as <strong>{selectedPinObj.type}</strong>. 
+                  Type has been auto-set.
                 </Form.Text>
               )}
             </Form.Group>
@@ -300,7 +313,8 @@ export default function DevicesPage() {
               <Form.Select
                 value={newDevice.type}
                 onChange={(e) => setNewDevice({ ...newDevice, type: e.target.value })}
-                disabled={!!DEDICATED_PINS[newDevice.pin]}
+                disabled={isTypeFixed}
+                style={isTypeFixed ? { backgroundColor: '#e9ecef', cursor: 'not-allowed', opacity: 0.8 } : {}}
               >
                 {DEVICE_TYPES.map((dt) => (
                   <option key={dt.value} value={dt.value}>{dt.label}</option>

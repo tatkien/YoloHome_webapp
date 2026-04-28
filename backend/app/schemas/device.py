@@ -11,7 +11,8 @@ class DeviceType(str, Enum):
     LOCK = "lock"
     TEMP = "temp_sensor"
     HUMI = "humidity_sensor"
-
+    UNKNOWN = "unknown"
+    
 
 class DeviceBase(BaseModel):
     name: str
@@ -20,6 +21,7 @@ class DeviceBase(BaseModel):
     pin: str
     hardware_id: str
     search_keywords: Optional[str] = None
+    meta_data: Optional[Dict[str, Any]] = None
 
 
 class DeviceCreate(DeviceBase):
@@ -31,6 +33,7 @@ class DeviceUpdate(BaseModel):
     room: Optional[str] = None
     type: Optional[DeviceType] = None
     search_keywords: Optional[str] = None
+    meta_data: Optional[Dict[str, Any]] = None
 
 
 class DeviceRead(DeviceBase):
@@ -54,13 +57,14 @@ class DeviceLogRead(BaseModel):
 
 class DeviceControlRequest(BaseModel):
     is_on: Optional[bool] = None
-    value: Optional[float] = Field(None, ge=0, le=1023)
+    value: Optional[float] = None
     
     @model_validator(mode="after")
     def validate_control(self) -> "DeviceControlRequest":
         if self.is_on is None and self.value is None:
             raise ValueError("At least one of 'is_on' or 'value' must be provided")
         return self
+
 
 class SensorDataRead(BaseModel):
     id: int

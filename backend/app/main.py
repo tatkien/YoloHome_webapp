@@ -1,47 +1,40 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
 from app.api.router import api_router
 from app.service.mqtt import mqtt_service
 from app.core.config import settings
 from app.ai.face_service import get_face_service
-from app.realtime.scheduler import run_device_schedule_loop
-from app.realtime.voice_stream import voice_streamer_service
+from app.workers.scheduler import start_scheduler, stop_scheduler
+from app.workers.voice_stream import voice_streamer_service
 from app.ai.voice_logic import voice_logic_service
-from app.service.maintenance import handle_admin_reset
-from app.db.session import AsyncSessionLocal
+from app.db.init_db import handle_admin_reset
 from app.core.logger import logger, logging_middleware
 
 
 # Ensure application module logs emit records.
 logger.setLevel(logging.INFO)
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Khởi tạo Face Service
     get_face_service()
-    
     # Kiểm tra cứu hộ Admin
-    async with AsyncSessionLocal() as db:
-        await handle_admin_reset(db)
-    stop_event = asyncio.Event()
-
-    # Khởi chạy song song MQTT, Scheduler, Thu Âm và AI STT
+    await handle_admin_reset()
+    # Chạy MQTT
     mqtt_task = asyncio.create_task(mqtt_service.connect_and_subscribe())
-    schedule_task = asyncio.create_task(run_device_schedule_loop(stop_event))
+    # Chạy APScheduler
+    await start_scheduler()
+    # Chạy Voice Services
     voice_task = asyncio.create_task(voice_streamer_service.start())
     logic_task = asyncio.create_task(voice_logic_service.start())
     try:
         yield
     finally:
         logger.info("Đang tắt server, dọn dẹp tài nguyên...")
-        stop_event.set()
-        await schedule_task
+        await stop_scheduler()
         await voice_logic_service.stop()
         await voice_streamer_service.stop()
         mqtt_task.cancel()
