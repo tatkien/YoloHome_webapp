@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_admin_user, get_current_user
 from app.core.config import settings
-from app.ai.face_service import FaceService, get_face_service
+from app.service.face_service import FaceService, get_face_service
 from app.core.security import verify_secret
 from app.db.db_utils import reset_sequence_to_min_gap
 from app.db.session import get_db

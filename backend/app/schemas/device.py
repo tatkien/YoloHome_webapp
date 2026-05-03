@@ -8,6 +8,7 @@ class DeviceType(str, Enum):
     FAN = "fan"
     LIGHT = "light"
     CAMERA = "camera"
+    MICROPHONE = "microphone"
     LOCK = "lock"
     TEMP = "temp_sensor"
     HUMI = "humidity_sensor"
@@ -31,15 +32,14 @@ class DeviceCreate(DeviceBase):
 class DeviceUpdate(BaseModel):
     name: Optional[str] = None
     room: Optional[str] = None
-    type: Optional[DeviceType] = None
     search_keywords: Optional[str] = None
     meta_data: Optional[Dict[str, Any]] = None
 
 
 class DeviceRead(DeviceBase):
     id: str
-    is_on: bool
-    value: float
+    is_on: Optional[bool] = None
+    value: Optional[float] = None
     last_seen_at: Optional[datetime] = None
     model_config = ConfigDict(from_attributes=True)
 
@@ -57,7 +57,7 @@ class DeviceLogRead(BaseModel):
 
 class DeviceControlRequest(BaseModel):
     is_on: Optional[bool] = None
-    value: Optional[float] = None
+    value: Optional[float] = Field(None, ge=0, le=1023)
     
     @model_validator(mode="after")
     def validate_control(self) -> "DeviceControlRequest":

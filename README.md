@@ -11,7 +11,7 @@ YoloHome is a smart-home platform with real-time device control, AI voice comman
 | Database        | PostgreSQL (pgvector image in Docker) |
 | Messaging       | MQTT (Eclipse Mosquitto)              |
 | Realtime        | WebSocket (JWT-authenticated)         |
-| AI Models       | OpenWakeWord, Whisper, RetinaFace, ArcFace |
+| AI Models       | Sherpa-ONNX, Faster-Whisper, InsightFace (RetinaFace + ArcFace) |
 | Task Scheduling | APScheduler                           |
 | Containers      | Docker + Docker Compose               |
 | Hardware Script | MicroPython (YoloBit)                 |
@@ -24,28 +24,27 @@ YoloHome is a smart-home platform with real-time device control, AI voice comman
 YoloHome_webapp/
 ├── backend/
 │   ├── app/
-│   │   ├── ai/                 # Face recognition, voice logic, and NLP intent
-│   │   ├── api/routes/         # Auth, users, devices, face, ws
-│   │   ├── core/               # Config, security, logger
-│   │   ├── db/                 # Async session, utils, init_db
-│   │   ├── models/             # ORM models
-│   │   ├── schemas/            # Pydantic schemas
-│   │   ├── service/            # Core business logic (device, command, history, ws, mqtt)
-│   │   └── workers/            # Background tasks (scheduler, voice_stream)
-│   ├── alembic/
+│   │   ├── api/routes/         # Entry points: REST API and WebSocket endpoints
+│   │   ├── service/            # Business Logic: AI (Voice/Face), Scheduling, Device management
+│   │   ├── core/               # Infrastructure: Config, Security, Drivers (MQTT, WS, Audio Streamer)
+│   │   ├── workers/            # Background Tasks: Periodic job registration (APScheduler)
+│   │   ├── db/                 # Persistence: Database session and migrations
+│   │   ├── models/             # Data Models: SQLAlchemy ORM definitions
+│   │   └── schemas/            # Data Validation: Pydantic schemas
+│   ├── alembic/                # Database migration tool configuration
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── frontend/
-│   ├── src/components/
-│   ├── src/pages/
-│   ├── src/contexts/
-│   ├── src/services/
+│   ├── src/components/         # Reusable UI components
+│   ├── src/hooks/              # Custom React hooks (WebSocket, Auth)
+│   ├── src/pages/              # Main application pages (Dashboard, History)
+│   ├── src/services/           # API communication layers
 │   ├── Dockerfile
 │   └── package.json
 ├── models/                     # Face model files + prepare script
 ├── yolobit_microPython/        # Hardware script for YoloBit
 ├── docker-compose.yml
-├── mosquitto.conf
+├── mosquitto.conf              # MQTT Broker configuration
 └── .env.example
 ```
 
@@ -141,12 +140,35 @@ The system uses 4 specific MQTT topics for bi-directional communication with har
 
 ---
 
+## AI & Voice Engine
+
+YoloHome features a sophisticated voice control pipeline designed for low-latency and high-accuracy Vietnamese command processing.
+
+### 1. Voice Control Pipeline
+- **Voice Streamer (Core):** A low-level audio driver that uses `ffmpeg` to pull raw PCM audio from an IP Webcam/Microphone URL (`IP_WEBCAM_AUDIO_URL`) and feeds it into an internal queue.
+- **Voice Service (Business Logic):** Orchestrates the full AI lifecycle:
+    - **Keyword Spotting (KWS):** Powered by **Sherpa-ONNX** to detect the wake word (e.g., "Hey Yolo").
+    - **Speech-to-Text (STT):** Powered by **Faster-Whisper** for Vietnamese command recognition.
+    - **Intent Matching:** Uses **RapidFuzz** to map text to hardware commands.
+
+### 2. Face Recognition
+- **Detection:** **RetinaFace** is used for high-accuracy face localization even in challenging lighting.
+- **Recognition:** **ArcFace (ResNet100)** generates 512-D face embeddings.
+- **Database:** Embeddings are stored in **PostgreSQL** using the `pgvector` extension for efficient similarity searches.
+
+---
+
 ## Realtime Behavior
 
-- Frontend opens one global WebSocket connection via `WS /api/v1/ws?token=<jwt>`.
-- Client sends `{ "type": "ping" }` every 30 seconds.
-- Server closes idle sockets after 60 seconds if no messages are received.
-- Real-time updates (sensor data, device state changes, scheduled triggers) are pushed through this connection.
+YoloHome uses a high-performance WebSocket architecture for instant updates and reliable hardware control.
+
+- **Secure Handshake:** Frontend connects via `WS /api/v1/ws`. Authentication is performed using **WebSocket Subprotocols** (`["token", JWT]`) to prevent sensitive tokens from appearing in server access logs.
+- **Bi-directional Heartbeat:** Client sends `{ "type": "ping" }` every 30s; server maintains a 60s idle timeout.
+- **Command-Response Logic:**
+    - When a command is sent, the UI enters a **Pending State** (visual spinners).
+    - The database is only updated once the physical hardware acknowledges success via a `state` message.
+    - This ensures the Dashboard always reflects the **actual** state of your home, not just the requested state.
+- **Global Broadcast:** Sensor data, device state changes, and system alerts are pushed instantly to all connected clients.
 
 ## Environment Variables
 

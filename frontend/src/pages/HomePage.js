@@ -12,7 +12,7 @@ import api from '../services/api';
 
 const DEVICE_ICONS = {
   fan: '🌀', light: '💡', camera: '📷', lock: '🔒',
-  temp_sensor: '🌡️', humidity_sensor: '💧',
+  temp_sensor: '🌡️', humidity_sensor: '💧', microphone: '🎙️',
 };
 
 const DEVICE_UNITS = {
@@ -242,6 +242,10 @@ export default function HomePage() {
   const [devicesLoading, setDevicesLoading] = useState(true);
   const [error, setError] = useState('');
 
+  const [voiceStatus, setVoiceStatus] = useState('idle'); // idle, active, thinking, done
+  const [voiceText, setVoiceText] = useState('');
+  const [rms, setRms] = useState(0);
+
   const fetchDevices = useCallback(async () => {
     try {
       setDevicesLoading(true);
@@ -255,6 +259,14 @@ export default function HomePage() {
   useEffect(() => {
     const handleWsMessage = (e) => {
       const payload = e.detail;
+      if (payload.event === 'voice.status') {
+        setVoiceStatus(payload.data.status);
+        if (payload.data.text) setVoiceText(payload.data.text);
+        if (payload.data.status === 'active') setVoiceText('');
+      }  
+      else if (payload.event === 'voice.vibe') {
+        setRms(payload.data.volume);
+      }
       if (payload.event === 'sensor_update') {
         setDevices((prev) => prev.map(d => {
           if (d.hardware_id === payload.hardware_id && payload.data[d.pin] !== undefined)
@@ -263,7 +275,9 @@ export default function HomePage() {
         }));
       } else if (payload.event === 'device_update') {
         setDevices((prev) => prev.map(d =>
-          d.id === payload.device_id ? { ...d, is_on: payload.data.is_on, value: payload.data.value } : d
+          d.id === payload.device_id 
+            ? { ...d, is_on: payload.data.is_on, value: payload.data.value, pending: payload.data.pending } 
+            : d
         ));
       }
     };
@@ -272,7 +286,8 @@ export default function HomePage() {
   }, []);
 
   const handleDeviceCommand = async (deviceId, isOn, value) => {
-    setDevices((prev) => prev.map(d => d.id === deviceId ? { ...d, is_on: isOn, value } : d));
+    // Đánh dấu trạng thái pending cục bộ ngay khi bấm
+    setDevices((prev) => prev.map(d => d.id === deviceId ? { ...d, is_on: isOn, value, pending: true } : d));
     try {
       await api.post(`/devices/${deviceId}/command`, { is_on: isOn, value });
     } catch (err) { console.error('Failed to send command', err); fetchDevices(); }
@@ -283,6 +298,7 @@ export default function HomePage() {
     if (d.type === 'lock') return d.is_on ? '🔓 Open' : '🔒 Locked';
     if (d.type === 'light') return d.is_on ? '💡 On' : 'Off';
     if (d.type === 'camera') return d.is_on ? '🟢 Active' : 'Off';
+    if (d.type === 'microphone') return d.is_on ? '🟢 Active' : 'Off';
     if (d.type === 'fan') return d.is_on ? `Speed ${Math.round(d.value)}` : 'Off';
     return `${d.value}${unit}`;
   };
@@ -364,11 +380,63 @@ export default function HomePage() {
                 <Col xs={6} md={4} lg={3} key={d.id}>
                   <Card className="shadow-sm border h-100">
                     <Card.Body className="p-3">
+                      {d.type === 'microphone' ? (
+                     <>
+                        <div className="d-flex justify-content-between align-items-start mb-2">
+                          <div className="position-relative">
+                            <span 
+                              className={`fs-4 ${voiceStatus === 'thinking' ? 'spinner-border spinner-border-sm text-primary mb-2' : ''}`} 
+                              style={{ display: 'inline-block', width: '30px', height: '30px' }}
+                            >
+                              {voiceStatus === 'thinking' ? '' : (DEVICE_ICONS[d.type] || '🎙️')}
+                            </span>
+                            {voiceStatus === 'active' && d.is_on && (
+                              <div className="position-absolute top-50 start-50 translate-middle" 
+                                style={{ 
+                                  width: `${30 + rms/3}px`, height: `${30 + rms/3}px`, 
+                                  backgroundColor: 'rgba(220, 53, 69, 0.3)', borderRadius: '50%', zIndex: -1 
+                                }}>
+                              </div>
+                            )}
+                          </div>
+                          <Badge bg={
+                            !d.is_on ? 'secondary' : 
+                            voiceStatus === 'active' ? 'danger' : 
+                            voiceStatus === 'thinking' ? 'primary' : 'success'
+                          }>
+                            {!d.is_on ? 'OFF' : voiceStatus.toUpperCase()}
+                          </Badge>
+                        </div>
+                        <p className="fw-semibold small mb-0">{d.name}</p>
+                        <p className="text-muted small mb-2">{d.room || 'System'}</p>
+                        {d.is_on && (
+                          <div className="mt-3">
+                            <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.65rem' }}>
+                              <span className="text-muted">Volume</span>
+                              <span className={voiceStatus === 'active' ? 'text-danger fw-bold' : 'text-primary'}>{rms}%</span>
+                            </div>
+                            <div style={{ width: '100%', height: '6px', backgroundColor: '#e9ecef', borderRadius: '3px', overflow: 'hidden' }}>
+                              <div style={{ 
+                                width: `${rms}%`, height: '100%', 
+                                backgroundColor: voiceStatus === 'active' ? '#dc3545' : '#0d6efd',
+                                transition: 'width 0.1s ease-out, background-color 0.3s'
+                              }}></div>
+                            </div>
+                            <div className="mt-2 text-truncate" style={{ fontSize: '0.75rem', color: voiceText ? '#000' : '#adb5bd', fontStyle: 'italic', minHeight: '18px' }}>
+                              {voiceText ? `"${voiceText}"` : (voiceStatus === 'idle' ? "Nói 'Hey Yolo'..." : "...")}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    ) : (
 
+                      <>
                       <div className="d-flex justify-content-between align-items-start mb-2">
-                        <span className="fs-4">{DEVICE_ICONS[d.type] || '📦'}</span>
-                        <Badge bg={d.is_on ? 'success' : 'secondary'}>
-                          {d.is_on ? 'ON' : 'OFF'}
+                        <span className="fs-4">
+                          {d.pending ? <Spinner animation="border" size="sm" className="text-primary" /> : (DEVICE_ICONS[d.type] || '📦')}
+                        </span>
+                        <Badge bg={d.pending ? 'warning' : (d.is_on ? 'success' : 'secondary')} text={d.pending ? 'dark' : 'white'}>
+                          {d.pending ? 'WAIT...' : (d.is_on ? 'ON' : 'OFF')}
                         </Badge>
                       </div>
 
@@ -381,7 +449,8 @@ export default function HomePage() {
                           id={`sw-${d.id}`}
                           label={d.is_on ? 'On' : 'Off'}
                           checked={d.is_on}
-                          onChange={e => handleDeviceCommand(d.id, e.target.checked, e.target.checked ? 1 : 0)}
+                          disabled={d.pending}
+                          onChange={e => handleDeviceCommand(d.id, e.target.checked, e.target.checked ? null : 0)}
                           className={d.is_on ? 'text-success' : 'text-muted'}
                         />
                       )}
@@ -393,6 +462,7 @@ export default function HomePage() {
                             id={`sw-${d.id}`}
                             label={d.is_on ? 'On' : 'Off'}
                             checked={d.is_on}
+                            disabled={d.pending}
                             onChange={e => {
                               const on = e.target.checked;
                               handleDeviceCommand(d.id, on, on ? (d.value > 0 ? d.value : 1) : 0);
@@ -405,6 +475,7 @@ export default function HomePage() {
                                 <Button
                                   key={lvl}
                                   variant={d.value === lvl ? 'primary' : 'outline-primary'}
+                                  disabled={d.pending}
                                   onClick={() => handleDeviceCommand(d.id, true, lvl)}
                                 >
                                   {lvl}
@@ -416,12 +487,13 @@ export default function HomePage() {
                       )}
 
                       {!['light', 'fan'].includes(d.type) && (
-                        <p className={`fw-bold small mb-0 ${(d.is_on || d.value > 0) ? 'text-success' : 'text-muted'}`}>
-                          {renderDeviceValue(d)}
-                        </p>
+                      <p className={`fw-bold small mb-0 ${(d.is_on || d.value > 0) ? 'text-success' : 'text-muted'}`}>
+                        {renderDeviceValue(d)}
+                      </p>
                       )}
-
-                    </Card.Body>
+                    </>
+                  )}
+                </Card.Body>
                   </Card>
                 </Col>
               ))}

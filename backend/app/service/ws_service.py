@@ -1,74 +1,80 @@
 import asyncio
-from collections import defaultdict
 import sqlalchemy as sa
 from fastapi import WebSocket, WebSocketDisconnect, WebSocketException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from collections import defaultdict
 from app.core.security import decode_access_token
 from app.db.session import AsyncSessionLocal
 from app.models.user import User
 from app.core.logger import logger
-
-WS_IDLE_TIMEOUT_SECONDS = 60
+from app.core.config import settings
 
 class WsService:
+    """
+    WebSocket Service: Quản lý kết nối và gửi tin nhắn thời gian thực lên web.
+    """
     def __init__(self):
+        # Lưu trữ trạng thái kết nối trực tiếp trong Service
         self.active_connections: dict[int, list[WebSocket]] = defaultdict(list)
 
-    # ==========================================
-    # CONNECTION MANAGEMENT
-    # ==========================================
-    async def connect_user(self, user_id: int, websocket: WebSocket) -> None:
-        """Register a shared websocket connection for a user."""
-        await websocket.accept()
+    def _add_connection(self, user_id: int, websocket: WebSocket):
         if websocket not in self.active_connections[user_id]:
             self.active_connections[user_id].append(websocket)
 
-    def disconnect_user(self, user_id: int, websocket: WebSocket) -> None:
-        """Disconnect a websocket and clean up in-memory state."""
-        connections = self.active_connections.get(user_id)
-        if connections and websocket in connections:
-            connections.remove(websocket) 
-        
-        # If user closed all tabs/apps, remove the key from the dict
-        if connections is not None and not connections:
-            self.active_connections.pop(user_id, None)
+    def _remove_connection(self, user_id: int, websocket: WebSocket):
+        if user_id in self.active_connections:
+            if websocket in self.active_connections[user_id]:
+                self.active_connections[user_id].remove(websocket)
+            if not self.active_connections[user_id]:
+                self.active_connections.pop(user_id, None)
 
-    # ==========================================
-    # DATA DELIVERY
-    # ==========================================
+    async def connect_user(self, user_id: int, websocket: WebSocket) -> None:
+        """Chấp nhận kết nối và đăng ký vào bộ nhớ."""
+        subprotocols = websocket.scope.get("subprotocols", [])
+        chosen = "token" if "token" in subprotocols else None
+        await websocket.accept(subprotocol=chosen)
+        self._add_connection(user_id, websocket)
+
+    def disconnect_user(self, user_id: int, websocket: WebSocket) -> None:
+        """Hủy đăng ký kết nối."""
+        self._remove_connection(user_id, websocket)
+
     async def send_to_user(self, user_id: int, payload: dict) -> None:
-        """
-        Send data to all online client connections of this user.
-        """
+        """Gửi dữ liệu cho tất cả kết nối của 1 user (kèm dọn dẹp kết nối lỗi)."""
         connections = self.active_connections.get(user_id, [])
         if not connections:
             return
 
-        # 1. Build send tasks
+        # Tạo bản sao danh sách để tránh lỗi khi remove phần tử trong lúc lặp
         targets = list(connections)
         tasks = [ws.send_json(payload) for ws in targets]
         
-        # 2. Execute all tasks concurrently
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # 3. Inspect results and remove dead connections automatically
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                ws_failed = targets[i]
-                if ws_failed in self.active_connections[user_id]:
-                    self.active_connections[user_id].remove(ws_failed)
-                logger.debug(f"[WS Cleanup] Removed stale connection for user {user_id} due to: {result}")
-        
-        # Final cleanup check
-        if not self.active_connections[user_id]:
-            self.active_connections.pop(user_id, None)
+                # Nếu gửi lỗi, xóa kết nối "chết"
+                self._remove_connection(user_id, targets[i])
+                logger.debug(f"[WsService Cleanup] Removed stale connection for user {user_id}")
+    
+    async def broadcast(self, payload: dict) -> None:
+        """Gửi dữ liệu cho tất cả user đang online."""
+        user_ids = list(self.active_connections.keys())
+        for user_id in user_ids:
+            await self.send_to_user(user_id, payload)
 
     # ==========================================
     # BUSINESS LOGIC
     # ==========================================
     @staticmethod
-    async def authenticate_ws_user(token: str) -> User:
+    async def authenticate_ws_user(websocket: WebSocket, query_token: str | None = None) -> User:
+        # Ưu tiên lấy từ Subprotocol để tránh lộ log URL
+        token = query_token
+        subprotocols = websocket.scope.get("subprotocols", [])
+        if "token" in subprotocols:
+            idx = subprotocols.index("token")
+            if idx + 1 < len(subprotocols):
+                token = subprotocols[idx + 1]
+
         if not token:
             raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Token required")
         
@@ -86,7 +92,7 @@ class WsService:
 
     async def handle_connection(self, websocket: WebSocket, token: str | None) -> None:
         # 1. Authenticate and resolve user
-        user = await self.authenticate_ws_user(token)
+        user = await self.authenticate_ws_user(websocket, token)
 
         # 2. Accept connection and register in manager
         await self.connect_user(user.id, websocket)
@@ -95,22 +101,18 @@ class WsService:
         # 3. Keep connection alive with idle timeout
         try:
             while True:
-                # Wait for message with 60s timeout — client must ping every 30s
                 data = await asyncio.wait_for(
-                    websocket.receive_json(), timeout=WS_IDLE_TIMEOUT_SECONDS
+                    websocket.receive_json(), timeout=settings.WS_IDLE_TIMEOUT_SECONDS
                 )
-
-                # Handle ping/pong
                 if data.get("type") == "ping":
                     await websocket.send_json({"type": "pong"})
 
         except asyncio.TimeoutError:
-            # Client didn't send anything for 60 seconds
             await websocket.close(code=1000, reason="Idle timeout")
         except WebSocketDisconnect:
             pass
         finally:
             self.disconnect_user(user.id, websocket)
 
-# Shared singleton instance
+# Singleton
 realtime_manager = WsService()

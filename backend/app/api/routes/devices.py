@@ -7,8 +7,9 @@ from app.schemas.device import DeviceType, DeviceRead, DeviceUpdate, DeviceCreat
 from app.schemas.schedule import DeviceScheduleCreate, DeviceScheduleUpdate, DeviceScheduleRead
 from app.schemas.hardware import HardwareNodeSummary, HardwareNodeRead
 from app.core.logger import logger
-from app.service.command_service import device_command
-from app.service.device_service import DeviceService, HardwareService, ScheduleService
+from app.service.device_service import DeviceService, HardwareService
+from app.service.schedule_service import ScheduleService
+from app.service.voice_intent import voice_intent_service
 from app.service.history_service import get_sensor_data_history as get_sensor_history_service, get_device_history as get_device_history_service
 
 router = APIRouter(prefix="/devices", tags=["devices"])
@@ -49,7 +50,10 @@ async def create_device(
     admin: User = Depends(get_admin_user),
 ):
     """Admin creates a new device mapped to a hardware pin."""
-    return await DeviceService.create_device(db, payload, str(admin.id))
+    device = await DeviceService.create_device(db, payload, str(admin.id))
+    # Load lại cache cho Voice AI
+    await voice_intent_service.reload_cache(db)
+    return device
 
 
 @router.get("/", response_model=List[DeviceRead])
@@ -80,9 +84,7 @@ async def get_sensor_data_history(
     """
     Unified endpoint to get sensor data history with optional time range filtering.
     """
-    return await get_sensor_history_service(
-        db, device_id, sensor_type, limit, time_range
-    )
+    return await get_sensor_history_service(db, device_id, sensor_type, limit, time_range)
 
 
 @router.get("/{device_id}/history", response_model=List[DeviceLogRead])
@@ -92,7 +94,7 @@ async def get_device_history(
     _: User = Depends(get_current_user),
     limit: int = Query(20, ge=1, le=100),
 ):
-    """Lấy nhật ký hoạt động gần nhất của một thiết bị."""
+    """Lấy nhật ký hoạt động gần nhất của 1 thiết bị."""
     return await get_device_history_service(db, device_id, limit)
 
 
@@ -113,9 +115,11 @@ async def update_device(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(get_admin_user),
 ):
-    """Cập nhật thông tin thiết bị (tên, phòng, loại...)."""
+    """Cập nhật thông tin thiết bị (tên, phòng,...)."""
     logger.info(f"[API] Nhận yêu cầu PATCH cho thiết bị: {device_id}")
-    return await DeviceService.update_device(db, device_id, payload, str(admin.id))
+    device = await DeviceService.update_device(db, device_id, payload, str(admin.id))
+    await voice_intent_service.reload_cache(db)
+    return device
 
 
 @router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -126,6 +130,7 @@ async def delete_device(
 ):
     """Delete a device."""
     await DeviceService.delete_device(db, device_id, str(admin.id))
+    await voice_intent_service.reload_cache(db)
 
 # --- CONTROL ---
 @router.post("/{device_id}/command")
@@ -138,15 +143,15 @@ async def send_command(
     """Web client calls this API to send command via MQTT to YoloBit hardware."""
     try:
         logger.info(f"[COMMAND] Device: {device_id} | Action: {'ON' if payload.is_on else 'OFF'} | Value: {payload.value} | Actor: {user.id}")
-        result = await device_command(
+        success = await DeviceService.send_command(
             db=db,
             device_id=device_id,
             is_on=payload.is_on,
             value=payload.value,
-            actor=str(user.id),
-            source="Web Command"
+            actor=user.username,
+            source="Web Dashboard"
         )
-        return result
+        return {"status": "success" if success else "failed"}
     except ValueError as str_err:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, 

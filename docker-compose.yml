@@ -38,8 +38,8 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
-      - ./models:/models:ro
-      - ./whisper_cache:/root/.cache/huggingface
+      - ./models:/models
+      - ./models/whisper_cache:/root/.cache/huggingface
       - backend_deps:/app/node_modules
 
   frontend:

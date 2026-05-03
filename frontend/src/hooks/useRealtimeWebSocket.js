@@ -13,7 +13,7 @@ function buildWebSocketUrl(token) {
     return null;
   }
   const wsProto = u.protocol === 'https:' ? 'wss' : 'ws';
-  return `${wsProto}://${u.host}/api/v1/ws?token=${encodeURIComponent(token)}`;
+  return `${wsProto}://${u.host}/api/v1/ws`;
 }
 
 /**
@@ -57,7 +57,7 @@ export function useRealtimeWebSocket(token) {
       const url = buildWebSocketUrl(tokenRef.current);
       if (!url) return;
 
-      ws = new WebSocket(url);
+      ws = new WebSocket(url, ["token", tokenRef.current]);
 
       ws.onopen = () => {
         if (stopped) return;
