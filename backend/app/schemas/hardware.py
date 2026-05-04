@@ -7,6 +7,7 @@ class PinConfig(BaseModel):
     type: Union[DeviceType, str]
     model_config = ConfigDict(from_attributes=True)
 
+
 class HardwareNodeBase(BaseModel):
     id: str  # Chip ID reported by hardware
     name: str
@@ -17,6 +18,7 @@ class HardwareNodeCreate(HardwareNodeBase):
 
 class HardwareNodeSummary(HardwareNodeBase):
     model_config = ConfigDict(from_attributes=True)
+
 
 class HardwareNodeRead(HardwareNodeBase):
     devices: List[DeviceRead] = []

@@ -221,7 +221,7 @@ class FaceService:
             pos_landmarks = landmarks[pos_inds]
             pos_anchors   = anchor_centers[pos_inds]
 
-            # --- Decode bboxes (distance → x1y1x2y2) ---
+            # --- Decode bboxes ---
             x1 = pos_anchors[:, 0] - pos_bboxes[:, 0]
             y1 = pos_anchors[:, 1] - pos_bboxes[:, 1]
             x2 = pos_anchors[:, 0] + pos_bboxes[:, 2]
@@ -404,9 +404,9 @@ class FaceService:
     # ------------------------------------------------------------------
     def extract_embedding(self, aligned_face: np.ndarray) -> np.ndarray:
         """Run ArcFace on a 112x112 aligned BGR face → L2-normalized 512-d vector."""
-        # Preprocess: BGR → RGB, HWC → CHW, normalise to [-1, 1]
+        # Preprocess: BGR to RGB, HWC to CHW, normalise to [-1, 1]
         img = cv2.cvtColor(aligned_face, cv2.COLOR_BGR2RGB).astype(np.float32)
-        img = (img / 255.0 - 0.5) / 0.5  # → [-1, 1]
+        img = (img / 255.0 - 0.5) / 0.5  # [-1, 1]
         img = np.transpose(img, (2, 0, 1))  # CHW
         blob = np.expand_dims(img, axis=0)  # (1, 3, 112, 112)
 

@@ -49,75 +49,77 @@ const CustomTooltip = ({ active, payload, label }) => {
 function SensorChart({ sensor, color }) {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [range, setRange] = useState('1h'); // Default to 1 hour
-  const unit = DEVICE_UNITS[sensor.type] || '';
+  const [range, setRange] = useState('1h');
+  const [localValue, setLocalValue] = useState(sensor.value);
+  const unit = sensor.meta_data?.unit || DEVICE_UNITS[sensor.type] || '';
+
+  useEffect(() => {
+    setLocalValue(sensor.value);
+  }, [sensor.value]);
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      // Fixed API path to match Backend: /devices/sensor-data?sensor_type=...&range=...
       const res = await api.get('/devices/sensor-data', { 
         params: { 
+          device_id: sensor.id,
           sensor_type: sensor.type,
           range: range 
         } 
       });
       
-      // API returns newest-first, reverse for chronological display
       const points = [...res.data].reverse().map((item) => {
         const d = new Date(item.created_at);
         let timeLabel = formatTime(item.created_at);
-        
-        // If range is long, add date to label
         if (range === '7d') {
           timeLabel = `${d.getDate()}/${d.getMonth() + 1} ${timeLabel}`;
         }
-
         return {
           time: timeLabel,
           value: parseFloat(item.value),
+          min_value: item.min_value != null ? parseFloat(item.min_value) : parseFloat(item.value),
+          max_value: item.max_value != null ? parseFloat(item.max_value) : parseFloat(item.value),
           raw: item.created_at,
         };
       });
       setData(points);
-    } catch {
-      /* silent */
-    } finally {
-      setLoading(false);
-    }
-  }, [sensor.type, range]);
+    } catch { /* silent */ } finally { setLoading(false); }
+  }, [sensor.id, sensor.type, range]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  /* Listen to WS updates and append new point (only if in 1h range) */
   useEffect(() => {
     const handler = (e) => {
       const payload = e.detail;
       if (
-        range === '1h' && // Only live update if looking at recent data
         payload.event === 'sensor_update' &&
         payload.hardware_id === sensor.hardware_id &&
         payload.data[sensor.pin] !== undefined
       ) {
-        const newPoint = {
-          time: formatTime(new Date().toISOString()),
-          value: parseFloat(payload.data[sensor.pin]),
-          raw: new Date().toISOString(),
-        };
-        setData((prev) => {
-          const next = [...prev, newPoint];
-          // Keep a reasonable number of points for live view
-          return next.length > 50 ? next.slice(next.length - 50) : next;
-        });
+        const val = parseFloat(payload.data[sensor.pin]);
+        if (!isNaN(val)) {
+          setLocalValue(val); 
+          if (range === '1h') {
+            const newPoint = {
+              time: formatTime(new Date().toISOString()),
+              value: val,
+              raw: new Date().toISOString(),
+            };
+            setData((prev) => {
+              const next = [...prev, newPoint];
+              return next.length > 50 ? next.slice(next.length - 50) : next;
+            });
+          }
+        }
       }
     };
     window.addEventListener('yolohome:ws', handler);
     return () => window.removeEventListener('yolohome:ws', handler);
   }, [sensor.hardware_id, sensor.pin, range]);
 
-  const latestValue = data.length > 0 ? data[data.length - 1].value : sensor.value;
-  const minVal = data.length > 0 ? Math.min(...data.map(d => d.value)) : 0;
-  const maxVal = data.length > 0 ? Math.max(...data.map(d => d.value)) : 0;
+  const latestValue = localValue;
+  const minVal = data.length > 0 ? Math.min(...data.map(d => d.min_value ?? d.value)) : 0;
+  const maxVal = data.length > 0 ? Math.max(...data.map(d => d.max_value ?? d.value)) : 0;
 
   return (
     <Card className="shadow-sm border h-100">
@@ -149,7 +151,7 @@ function SensorChart({ sensor, color }) {
 
           <div className="d-flex align-items-center gap-2">
             <span className="fw-bold" style={{ color, fontSize: '1.1rem' }}>
-              {latestValue != null ? `${latestValue}${unit}` : '—'}
+              {latestValue ? `${latestValue}${unit}` : '--'}
             </span>
           </div>
         </div>
@@ -176,7 +178,7 @@ function SensorChart({ sensor, color }) {
               </Col>
               <Col xs={4} className="text-center border-start border-end">
                 <p className="text-muted mb-0" style={{ fontSize: '0.65rem' }}>CURRENT</p>
-                <p className="fw-bold mb-0 small" style={{ color }}>{latestValue}{unit}</p>
+                <p className="fw-bold mb-0 small" style={{ color }}>{latestValue ? `${latestValue}${unit}` : '--'}</p>
               </Col>
               <Col xs={4} className="text-center">
                 <p className="text-muted mb-0" style={{ fontSize: '0.65rem' }}>MAX</p>
@@ -242,7 +244,7 @@ export default function HomePage() {
   const [devicesLoading, setDevicesLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const [voiceStatus, setVoiceStatus] = useState('idle'); // idle, active, thinking, done
+  const [voiceStatus, setVoiceStatus] = useState('idle'); // idle, active, thinking
   const [voiceText, setVoiceText] = useState('');
   const [rms, setRms] = useState(0);
 
@@ -286,7 +288,6 @@ export default function HomePage() {
   }, []);
 
   const handleDeviceCommand = async (deviceId, isOn, value) => {
-    // Đánh dấu trạng thái pending cục bộ ngay khi bấm
     setDevices((prev) => prev.map(d => d.id === deviceId ? { ...d, is_on: isOn, value, pending: true } : d));
     try {
       await api.post(`/devices/${deviceId}/command`, { is_on: isOn, value });
@@ -423,7 +424,7 @@ export default function HomePage() {
                               }}></div>
                             </div>
                             <div className="mt-2 text-truncate" style={{ fontSize: '0.75rem', color: voiceText ? '#000' : '#adb5bd', fontStyle: 'italic', minHeight: '18px' }}>
-                              {voiceText ? `"${voiceText}"` : (voiceStatus === 'idle' ? "Nói 'Hey Yolo'..." : "...")}
+                              {voiceText ? `"${voiceText}"` : (voiceStatus === 'idle' ? "Nói 'Go Home'..." : "...")}
                             </div>
                           </div>
                         )}

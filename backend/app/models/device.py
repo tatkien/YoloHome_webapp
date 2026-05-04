@@ -49,6 +49,7 @@ class Device(Base):
 
 class DeviceLog(Base):
     """Store device activity history."""
+
     __tablename__ = "device_logs"
 
     id = sa.Column(sa.Integer, primary_key=True, index=True)

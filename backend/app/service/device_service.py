@@ -209,7 +209,7 @@ class DeviceService:
                 }
                 await realtime_manager.broadcast(ws_payload)
 
-                # Ghi lịch sử nếu có thay đổi hoặc có lỗi từ phần cứng
+                # Ghi lịch sử nếu mạch báo về có thay đổi
                 if changed or data.status != "success":
                     status_prefix = "[Feedback]" if data.status == "success" else "[FAILED]"
                     await add_history_record(
@@ -236,7 +236,8 @@ class DeviceService:
 
                     if device:
                         device.last_seen_at = sa.func.now()
-                        new_sensor_data = SensorData(device_id=device.id, value=val, sensor_type=device.type)
+                        device.value = float(val)
+                        new_sensor_data = SensorData(device_id=device.id, value=float(val), sensor_type=device.type)
                         session.add(new_sensor_data)       
 
                 await session.commit()
@@ -259,18 +260,18 @@ class DeviceService:
 
         final_value = value
 
-        # Logic điều phối giá trị dựa trên Metadata (DB) và Config (settings)
+        # Logic xác định giá trị điều khiển dựa trên Metadata (DB) và Config (settings)
         meta = device.meta_data or {}
         default_meta = settings.DEFAULT_DEVICE_METADATA.get(dev_type, {})
         
-        # Xác định dải giá trị [min, max]
+        # Xác định dải giá trị điều khiển
         v_range = meta.get("range") or default_meta.get("range") or [0, 1023]
         v_min, v_max = v_range[0], v_range[1]
 
         # Xử lý giá trị điều khiển
         if is_on:
             if final_value is None:
-                # Ưu tiên: 1. Giá trị hiện tại (nếu > 0), 2. Mặc định DB, 3. Mặc định Config, 4. Max
+                # Ưu tiên: 1. Giá trị hiện tại thiết bị (nếu đang > 0), 2. Default_value trong DB, 3. Default_value trong Config, 4. Max
                 final_value = (device.value if device.value and device.value > 0 else None) or \
                               meta.get("default_value") or \
                               default_meta.get("default_value") or \

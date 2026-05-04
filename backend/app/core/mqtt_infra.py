@@ -24,8 +24,16 @@ class MQTTInfra:
                     
                     publish_task = asyncio.create_task(self._process_command_queue(client))
                     
-                    async for message in client.messages:
-                        await message_handler(message)
+                    try:
+                        async for message in client.messages:
+                            await message_handler(message)
+                    finally:
+                        # Khi thoát khỏi loop, hủy task publish
+                        publish_task.cancel()
+                        try:
+                            await publish_task
+                        except asyncio.CancelledError:
+                            pass
                         
             except aiomqtt.MqttError as e:
                 logger.error(f"[MQTT Infra] Lỗi kết nối: {e}. Thử lại sau {self.reconnect_interval}s...")

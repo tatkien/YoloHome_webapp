@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Any
 from app.schemas.device import DeviceType
 
+
 # Hardware announce schema
 class PinConfig(BaseModel):
     pin: str
@@ -11,6 +12,7 @@ class PinConfig(BaseModel):
 class MqttAnnounceSchema(BaseModel):
     name: str
     pins: List[PinConfig]
+
 
 
 # Sensor payload schema

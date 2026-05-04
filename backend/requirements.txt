@@ -30,13 +30,15 @@ python-dotenv==1.2.2
 apscheduler==3.10.4
 aiomqtt==2.5.1
 
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 # ── AI / Vision
 numpy==2.4.3
 opencv-python-headless==4.13.0.92
 onnxruntime==1.24.4
 scikit-learn>=1.2.0
 scipy>=1.10.0
-torch --index-url https://download.pytorch.org/whl/cpu
+torch
 onnx
 onnxscript
 

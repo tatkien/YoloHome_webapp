@@ -47,6 +47,16 @@ export default function DevicesPage() {
   const [deviceLogs, setDeviceLogs] = useState({});
   const [logsLoading, setLogsLoading] = useState({});
 
+  // Edit Modal State
+  const [showEdit, setShowEdit] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editDevice, setEditDevice] = useState({ id: '', name: '', room: '' });
+
+  // Delete Modal State
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deviceToDelete, setDeviceToDelete] = useState({ id: '', name: '' });
+
   const fetchDevices = useCallback(async () => {
     try {
       setLoading(true);
@@ -117,18 +127,62 @@ export default function DevicesPage() {
     }
   };
 
-  const handleDelete = async (id, name) => {
-    if (!window.confirm(`Delete device "${name}" and all its data?`)) return;
+  const handleDevChange = (id, currentName, currentRoom) => {
     setError('');
+    setEditDevice({
+      id,
+      name: currentName || '',
+      room: currentRoom || '',
+    });
+    setShowEdit(true);
+  };
+
+  const handleUpdateDevice = async (e) => {
+    e.preventDefault();
+    setError('');
+    setEditLoading(true);
+
+    try {
+      await api.patch(`/devices/${editDevice.id}`, {
+        name: editDevice.name.trim(),
+        room: editDevice.room.trim() || null,
+      });
+
+      setSuccess(`Device "${editDevice.name.trim()}" updated`);
+      setShowEdit(false);
+      setEditDevice({ id: '', name: '', room: '' });
+      fetchDevices();
+      fetchHardware();
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to update device');
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  const handleDelete = async (id, name) => {
+    setError('');
+    setDeleteLoading(true);
     try {
       await api.delete(`/devices/${id}`);
       setSuccess(`Device "${name}" deleted`);
       fetchDevices();
       fetchHardware();
       setTimeout(() => setSuccess(''), 3000);
+      setShowDeleteConfirm(false);
+      setDeviceToDelete({ id: '', name: '' });
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to delete device');
+    } finally {
+      setDeleteLoading(false);
     }
+  };
+
+  const askDeleteDevice = (id, name) => {
+    setError('');
+    setDeviceToDelete({ id, name });
+    setShowDeleteConfirm(true);
   };
 
   const fetchLogs = async (deviceId) => {
@@ -146,6 +200,16 @@ export default function DevicesPage() {
     } finally {
       setLogsLoading((prev) => ({ ...prev, [deviceId]: false }));
     }
+  };
+
+  const closeEditModal = () => {
+    setShowEdit(false);
+    setEditDevice({ id: '', name: '', room: '' });
+  };
+
+  const closeDeleteModal = () => {
+    setShowDeleteConfirm(false);
+    setDeviceToDelete({ id: '', name: '' });
   };
 
   const closeCreateModal = () => {
@@ -242,9 +306,14 @@ export default function DevicesPage() {
                       <small style={{ color: 'var(--text-muted)' }}>
                         {d.created_at ? new Date(d.created_at).toLocaleDateString() : ''}
                       </small>
-                      <Button variant="danger" size="sm" onClick={() => handleDelete(d.id, d.name)}>
-                        Delete
-                      </Button>
+                      <div className="d-flex gap-2">
+                        <Button variant="outline-primary" size="sm" onClick={() => handleDevChange(d.id, d.name, d.room)}>
+                          Edit
+                        </Button>
+                        <Button variant="danger" size="sm" onClick={() => askDeleteDevice(d.id, d.name)}>
+                          Delete
+                        </Button>
+                      </div>
                     </div>
                   </Card.Footer>
                 )}
@@ -253,6 +322,66 @@ export default function DevicesPage() {
           ))}
         </Row>
       )}
+
+      {/* Edit Device Modal */}
+      <Modal show={showEdit} onHide={closeEditModal} centered>
+        <Modal.Header closeButton>
+          <Modal.Title>Edit Device</Modal.Title>
+        </Modal.Header>
+        <Form onSubmit={handleUpdateDevice}>
+          <Modal.Body>
+            <Form.Group className="mb-3">
+              <Form.Label>Device Name</Form.Label>
+              <Form.Control
+                type="text"
+                placeholder="e.g. Living Room Light"
+                value={editDevice.name}
+                onChange={(e) => setEditDevice({ ...editDevice, name: e.target.value })}
+                required
+                autoFocus
+              />
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Label>Room <small style={{ color: 'var(--text-muted)' }}>(optional)</small></Form.Label>
+              <Form.Control
+                type="text"
+                placeholder="e.g. Living Room"
+                value={editDevice.room}
+                onChange={(e) => setEditDevice({ ...editDevice, room: e.target.value })}
+              />
+            </Form.Group>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="outline-dark" onClick={closeEditModal}>Cancel</Button>
+            <Button type="submit" disabled={editLoading}>
+              {editLoading ? <Spinner size="sm" animation="border" /> : 'Save Changes'}
+            </Button>
+          </Modal.Footer>
+        </Form>
+      </Modal>
+
+      {/* Delete Confirm Modal */}
+      <Modal show={showDeleteConfirm} onHide={closeDeleteModal} centered>
+        <Modal.Header closeButton>
+          <Modal.Title>Delete Device</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <Alert variant="warning" className="mb-0">
+            Are you sure you want to delete <strong>{deviceToDelete.name || 'this device'}</strong>? This action cannot be undone.
+          </Alert>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="outline-dark" onClick={closeDeleteModal} disabled={deleteLoading}>Cancel</Button>
+          <Button
+            variant="danger"
+            onClick={() => handleDelete(deviceToDelete.id, deviceToDelete.name)}
+            disabled={deleteLoading}
+          >
+            {deleteLoading ? <Spinner size="sm" animation="border" /> : 'Delete'}
+          </Button>
+        </Modal.Footer>
+      </Modal>
 
       {/* Create Device Modal */}
       <Modal show={showCreate} onHide={closeCreateModal} centered>

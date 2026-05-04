@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_admin_user, get_db
 from app.models.user import User
-from app.schemas.device import DeviceType, DeviceRead, DeviceUpdate, DeviceCreate, DeviceControlRequest, SensorDataRead, DeviceLogRead
+from app.schemas.device import DeviceType, DeviceRead, DeviceUpdate, DeviceCreate, DeviceControlRequest, SensorDataRead, DeviceLogRead, SensorHistoryRead
 from app.schemas.schedule import DeviceScheduleCreate, DeviceScheduleUpdate, DeviceScheduleRead
 from app.schemas.hardware import HardwareNodeSummary, HardwareNodeRead
 from app.core.logger import logger
@@ -56,6 +56,7 @@ async def create_device(
     return device
 
 
+
 @router.get("/", response_model=List[DeviceRead])
 async def list_devices(
     db: AsyncSession = Depends(get_db),
@@ -72,7 +73,7 @@ async def get_camera_devices(
     """Get all camera devices."""
     return await DeviceService.get_camera_devices(db)
 
-@router.get("/sensor-data", response_model=List[SensorDataRead])
+@router.get("/sensor-data", response_model=List[SensorHistoryRead])
 async def get_sensor_data_history(
     device_id: Optional[str] = Query(None, description="Filter by specific device ID"),
     sensor_type: Optional[DeviceType] = Query(None, description="Filter by sensor type (temp_sensor, humidity_sensor)"),

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 from enum import Enum
 
@@ -43,6 +43,7 @@ class DeviceRead(DeviceBase):
     last_seen_at: Optional[datetime] = None
     model_config = ConfigDict(from_attributes=True)
 
+
 class DeviceLogRead(BaseModel):
     id: int
     device_id: Optional[str] = None
@@ -70,6 +71,17 @@ class SensorDataRead(BaseModel):
     id: int
     device_id: Optional[str]
     value: float
+    sensor_type: DeviceType
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SensorHistoryRead(BaseModel):
+    device_id: Optional[str]
+    value: float
+    min_value: Optional[float] = None
+    max_value: Optional[float] = None
     sensor_type: DeviceType
     created_at: datetime
 

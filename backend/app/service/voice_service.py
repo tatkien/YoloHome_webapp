@@ -83,10 +83,13 @@ class VoiceService:
 
     async def _sync_mic_status(self, is_on: bool):
         """Đồng bộ trạng thái thiết bị SYS_MIC lên hệ thống"""
+        mic_meta = settings.DEFAULT_DEVICE_METADATA.get("mic", {})
+        default_val = mic_meta.get("default_value", 1.0)
+        
         payload = {
             "pin": "SYS_MIC",
             "is_on": is_on,
-            "value": 1023 if is_on else 0,
+            "value": default_val if is_on else 0.0,
             "status": "success"
         }
         try:

@@ -43,10 +43,12 @@ class Settings(BaseSettings):
 
     DEFAULT_DEVICE_METADATA: dict[str, dict] = {
         "fan": {"default_value": 1.0, "range": [0, 3], "unit": "speed"},
-        "light": {"default_value": 1023.0, "range": [0, 1023], "unit": "brighness"},
+        "light": {"default_value": 1023.0, "range": [0, 1023], "unit": "brightness"},
         "lock": {"default_value": 90.0, "range": [0, 90], "unit": "degree"},
         "camera": {"default_value": 1.0, "range": [0, 1], "unit": "state"},
-        "mic": {"default_value": 1.0, "range": [0, 1], "unit": "state"}
+        "mic": {"default_value": 1.0, "range": [0, 1], "unit": "state"},
+        "temp_sensor": {"default_value": 0.0, "range": [-40, 80], "unit": "°C"},
+        "humidity_sensor": {"default_value": 0.0, "range": [0, 100], "unit": "%"}
     }
 
     # --- VOICE CONTROL ---
@@ -57,8 +59,9 @@ class Settings(BaseSettings):
 
     # --- RETENTION SETTINGS ---
     SENSOR_RETENTION_DAYS: int = 30       
-    DEVICE_LOG_RETENTION_DAYS: int = 7  
-    LOG_RETENTION_DAYS: int = 7        
+    DEVICE_LOG_RETENTION_DAYS: int = 14  
+    LOG_RETENTION_DAYS: int = 14        
+    FACE_LOG_RETENTION_DAYS: int = 7    
 
 
     # --- MQTT CONFIGURATION ---
