@@ -5,12 +5,37 @@ import urllib.request
 import zipfile
 import torch
 import onnx
+import gdown
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def ensure_wake_word_model() -> None:
+    """Download hey_yolo.ppn from Google Drive once and validate basic integrity."""
+    file_id = "12FujKjF0YPEi7jBZgapeTYkIAuShH_tV"
+    output_path = os.path.join(BASE_DIR, "hey_yolo.ppn")
+
+    if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+        print(f"Wake word model already exists at {output_path}")
+        return
+
+    url = f"https://drive.google.com/uc?id={file_id}"
+    print("Downloading hey_yolo.ppn from Google Drive...")
+    gdown.download(url=url, output=output_path, quiet=False)
+
+    if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+        raise RuntimeError("Failed to download hey_yolo.ppn or downloaded file is empty")
+
+    print(f"Wake word model saved to {output_path}")
+
+
+ensure_wake_word_model()
 
 # Download and prepare ArcFace ResNet100 model for ONNX export
 # Download latest version
 path = kagglehub.model_download("nguyenletruongthien/auraface-resnet100-arcface-ms1mv3/pyTorch/r100_ms1mv3")
 _src = os.path.join(path, "ms1mv3_arcface_r100_fp16.pth")
-MODELS_DIR = os.path.join(os.getcwd(), "model_weights")
+MODELS_DIR = os.path.join(BASE_DIR, "model_weights")
 WEIGHTS_PATH = os.path.join(MODELS_DIR, "ms1mv3_arcface_r100_fp16.pth")
 if not os.path.exists(MODELS_DIR):
     os.makedirs(MODELS_DIR)
@@ -19,17 +44,18 @@ if not os.path.exists(WEIGHTS_PATH):
     shutil.copy2(_src, WEIGHTS_PATH)
 
 url = "https://raw.githubusercontent.com/deepinsight/insightface/master/recognition/arcface_torch/backbones/iresnet.py"
-if not os.path.exists("iresnet.py"):
+IRESNET_PATH = os.path.join(BASE_DIR, "iresnet.py")
+if not os.path.exists(IRESNET_PATH):
     print("Downloading iresnet.py architecture from InsightFace GitHub...")
-    urllib.request.urlretrieve(url, "iresnet.py")
+    urllib.request.urlretrieve(url, IRESNET_PATH)
 
 # ---------------------------------------------------------------------------
 # Download RetinaFace (det_10g.onnx) from InsightFace buffalo_l package
 # ---------------------------------------------------------------------------
-RETINAFACE_PATH = os.path.join(os.getcwd(), "det_10g.onnx")
+RETINAFACE_PATH = os.path.join(BASE_DIR, "det_10g.onnx")
 if not os.path.exists(RETINAFACE_PATH):
     BUFFALO_URL = "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
-    zip_path = os.path.join(os.getcwd(), "buffalo_l.zip")
+    zip_path = os.path.join(BASE_DIR, "buffalo_l.zip")
     print(f"Downloading buffalo_l.zip from {BUFFALO_URL}...")
     urllib.request.urlretrieve(BUFFALO_URL, zip_path)
 
@@ -53,7 +79,7 @@ else:
     print(f"RetinaFace model already exists at {RETINAFACE_PATH}")
 
 # Download and prepare MiniFASNetV2 model
-MINIFASNET_PATH = os.path.join(os.getcwd(), "MiniFASNetV2.onnx")
+MINIFASNET_PATH = os.path.join(BASE_DIR, "MiniFASNetV2.onnx")
 if not os.path.exists(MINIFASNET_PATH):
     MINIFASNET_URL = "https://github.com/yakhyo/face-anti-spoofing/releases/download/weights/MiniFASNetV2.onnx"
     print(f"Downloading MiniFASNetV2.onnx from {MINIFASNET_URL}...")
@@ -63,7 +89,7 @@ else:
     print(f"MiniFASNetV2 model already exists at {MINIFASNET_PATH}")
 
  # Download and prepare MiniFASNetV1SE model
-MINIFASNETV1SE_PATH = os.path.join(os.getcwd(), "MiniFASNetV1SE.onnx")
+MINIFASNETV1SE_PATH = os.path.join(BASE_DIR, "MiniFASNetV1SE.onnx")
 if not os.path.exists(MINIFASNETV1SE_PATH):
     MINIFASNETV1SE_URL = "https://github.com/yakhyo/face-anti-spoofing/releases/download/weights/MiniFASNetV1SE.onnx"
     print(f"Downloading MiniFASNetV1SE.onnx from {MINIFASNETV1SE_URL}...")
@@ -120,7 +146,8 @@ def prepare_model(pth_file_path, onnx_output_path, model_size="iresnet50"):
     print("ONNX Graph is valid and ready for FastAPI.")
 
 if __name__ == "__main__":
-    if not os.path.exists(os.path.join(os.getcwd(), "arcface_resnet100.onnx")):
-        prepare_model(WEIGHTS_PATH,  "arcface_resnet100.onnx", model_size="iresnet100")
+    arcface_onnx_path = os.path.join(BASE_DIR, "arcface_resnet100.onnx")
+    if not os.path.exists(arcface_onnx_path):
+        prepare_model(WEIGHTS_PATH, arcface_onnx_path, model_size="iresnet100")
     else:
-        print(f"ONNX model already exists at {os.path.join(os.getcwd(), 'arcface_resnet100.onnx')}")
+        print(f"ONNX model already exists at {arcface_onnx_path}")

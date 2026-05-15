@@ -1,3 +1,19 @@
+import React, { useState, useRef, useEffect, useCallback } from "react";
+import {
+  Container,
+  Row,
+  Col,
+  Card,
+  Button,
+  Alert,
+  Spinner,
+  Badge,
+  Form,
+  ButtonGroup,
+} from "react-bootstrap";
+import { useAuth } from "../contexts/AuthContext";
+import api from "../services/api";
+import VoiceDetectCard from "../components/VoiceDetectCard";
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Container, Row, Col, Card, Alert, Spinner,
@@ -11,8 +27,12 @@ import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
 
 const DEVICE_ICONS = {
-  fan: '🌀', light: '💡', camera: '📷', lock: '🔒',
-  temp_sensor: '🌡️', humidity_sensor: '💧',
+  fan: "🌀",
+  light: "💡",
+  camera: "📷",
+  lock: "🔒",
+  temp_sensor: "🌡️",
+  humidity_sensor: "💧",
 };
 
 const DEVICE_UNITS = {
@@ -197,16 +217,36 @@ function SensorChart({ sensor, color }) {
 
 /* ── Main Page ── */
 export default function HomePage() {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, token } = useAuth();
 
   const [devices, setDevices] = useState([]);
   const [devicesLoading, setDevicesLoading] = useState(true);
-  const [error, setError] = useState('');
 
+  // --- Camera state ---
+  const [camera, setCamera] = useState(null);
+  const [cameraLoading, setCameraLoading] = useState(true);
+
+  // --- Recognition state ---
+  const [preview, setPreview] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+  const [cameraOn, setCameraOn] = useState(false);
+  const [phaseText, setPhaseText] = useState("Camera is off");
+  const [currentFrame, setCurrentFrame] = useState(0);
+  const [spoofDetected, setSpoofDetected] = useState(false);
+
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const captureCanvasRef = useRef(null);
+  const canvasRef = useRef(null);
+  const imgRef = useRef(null);
+
+  // --- Fetch devices ---
   const fetchDevices = useCallback(async () => {
     try {
       setDevicesLoading(true);
-      const res = await api.get('/devices/');
+      const res = await api.get("/devices/");
       setDevices(res.data);
     } catch { /* silent */ } finally { setDevicesLoading(false); }
   }, []);
@@ -228,8 +268,8 @@ export default function HomePage() {
         ));
       }
     };
-    window.addEventListener('yolohome:ws', handleWsMessage);
-    return () => window.removeEventListener('yolohome:ws', handleWsMessage);
+    window.addEventListener("yolohome:ws", handleWsMessage);
+    return () => window.removeEventListener("yolohome:ws", handleWsMessage);
   }, []);
 
   const handleDeviceCommand = async (deviceId, isOn, value) => {

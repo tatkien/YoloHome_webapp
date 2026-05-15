@@ -96,7 +96,7 @@ class MQTTService:
         
         if not payload.value.is_integer():
             raise ValueError("Value must be an integer") # Camera, fan speed, light and servo only accept integer values
-
+        
         command_payload = {
             "pin": pin,
             "is_on": payload.is_on,
