@@ -148,7 +148,8 @@ class VoiceService:
                     "base", 
                     device="cpu", 
                     compute_type="int8",    
-                    download_root=settings.WHISPER_MODEL_PATH
+                    download_root=settings.WHISPER_MODEL_PATH,
+                    cpu_threads=settings.WHISPER_THREADS
                 )
                 logger.info("[VoiceService] Whisper đã sẵn sàng.")
 
@@ -165,7 +166,7 @@ class VoiceService:
                     decoder=f"{kws_dir}/decoder-epoch-12-avg-2-chunk-16-left-64.onnx",
                     joiner=f"{kws_dir}/joiner-epoch-12-avg-2-chunk-16-left-64.onnx",
                     keywords_file=keywords_file,
-                    num_threads=2,
+                    num_threads=settings.KWS_THREADS,
                     provider="cpu",
                 )
                 self.kws_stream = self.kws_model.create_stream()

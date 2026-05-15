@@ -141,7 +141,7 @@ class VoiceIntentService:
         found_action = None
         for kw_goc, kw_khongdau, a_type in self._action_list:
             score = self._get_hybrid_score(sent_dau, sent_khongdau, kw_goc, kw_khongdau)
-            if score >= 90: 
+            if score >= 85: 
                 found_action = a_type
                 break
 
@@ -150,7 +150,7 @@ class VoiceIntentService:
         matched_kw_khongdau = ""
         for kw_d, kw_no_d, dev_obj in self._device_cache:
             score = self._get_hybrid_score(sent_dau, sent_khongdau, kw_d, kw_no_d)
-            if score >= 80: 
+            if score >= 75: 
                 target_device = dev_obj
                 matched_kw_khongdau = kw_no_d
                 break

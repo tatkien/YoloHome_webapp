@@ -149,7 +149,7 @@ async def send_command(
             device_id=device_id,
             is_on=payload.is_on,
             value=payload.value,
-            actor=user.username,
+            actor=user.full_name if (user.full_name and user.full_name.strip()) else user.username,
             source="Web Dashboard"
         )
         return {"status": "success" if success else "failed"}

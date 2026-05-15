@@ -34,7 +34,7 @@ async def add_history_record(
                 device_name=device_name,
                 action=action,
                 actor=str(actor),
-                source=source,
+                source=f"{source} ({actor})" if actor and actor != "system" and actor != "hardware" else source,
             )
             session.add(new_log)
             await session.commit()

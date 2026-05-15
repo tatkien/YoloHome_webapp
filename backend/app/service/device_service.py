@@ -283,7 +283,7 @@ class DeviceService:
         # Lấy hardware_id để gửi MQTT
         hardware_id = device.hardware_id
         pin = device.pin
-
+        
         # Publish to MQTT
         topic = f"smart_home/hardware/{hardware_id}/command"
         mqtt_payload = {

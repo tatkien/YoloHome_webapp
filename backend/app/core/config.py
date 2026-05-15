@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     WHISPER_MODEL_PATH: str = "/models/voice/whisper"
     KWS_MODEL_DIR: str = "/models/voice/kws/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01"
     WAKE_WORDS: str | list[str] = ["hey computer", "super hero", "go home", "hi home"]
+    WHISPER_THREADS: int = 4
+    KWS_THREADS: int = 2
 
     # --- RETENTION SETTINGS ---
     SENSOR_RETENTION_DAYS: int = 30       

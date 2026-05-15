@@ -10,40 +10,7 @@ try:
 except ImportError:
     HAS_MQTT_LIB = False
     print("[ERROR] No MQTT Library")
-
-# NUÔI CHÓ
-wdt = WDT(timeout=20000)
-
-# KHỞI TẠO CHÂN
-display.show(Image.HEART)
-i2c = SoftI2C(scl=Pin(22), sda=Pin(21)) 
-rgb = RGBLed(13, 4)
-pin12.servo_write(0)
-PIN_MAP = {"P0": pin0, "P1": pin1, "P2": pin2}
-for pin_name in PIN_MAP: PIN_MAP[pin_name].write_analog(0)
-
-WIFI_SSID, WIFI_PASS = "G35", "12345678"
-MQTT_BROKER = "10.23.151.71"
-ID = ubinascii.hexlify(unique_id()).decode()
-
-# Topics
-TOPIC_ANNOUNCE = f"smart_home/hardware/{ID}/announce"
-TOPIC_SEN = f"smart_home/hardware/{ID}/sensor"
-TOPIC_COM = f"smart_home/hardware/{ID}/command"
-TOPIC_STA = f"smart_home/hardware/{ID}/state"
-
-# STATE MACHINE
-# Trạng thái WiFi
-W_DISCONNECTED, W_WAITING_ACTIVATE, W_CONNECTING, W_CONNECTED = 0, 1, 2, 3
-wifi_state = W_DISCONNECTED
-wifi_timer = 0
-
-# Trạng thái MQTT
-M_IDLE, M_CONNECTING, M_SUBSCRIBING, M_ANNOUNCING, M_READY = 0, 1, 2, 3, 4
-mqtt_state = M_IDLE
-mqtt_timer = 0
-mqtt_setup_done = False
-
+time.sleep(5)
 # CLASS SENSOR DHT20
 class DHT20:
     def __init__(self, i2c, address=0x38):
@@ -53,16 +20,16 @@ class DHT20:
         self.is_collecting = False
         self.start_time = 0
         time.sleep_ms(500)
-        try:
-            if not self.is_ready():
-                self.reset_register()
-                time.sleep_ms(10)
-        except Exception as e:
-            print("[ERROR] Init DHT20:", e)
+        if not self.is_ready():
+            self.reset_register()
+            time.sleep_ms(10)
             
     def _get_status(self):
-        try: return self.i2c.readfrom(self.address, 1)[0]
-        except:  return 0
+        try:
+            return self.i2c.readfrom(self.address, 1)[0]
+        except Exception as e:
+            print("[DHT] status:", e)
+            return 0
             
     def is_ready(self):
         return (self._get_status() & 0x08) == 0x08
@@ -110,8 +77,9 @@ class DHT20:
     def humi(self): return round(self._humi, 1)
 
 class RGBLed:
-    def __init__(self, pin, num_leds):
-        self._np = NeoPixel(Pin(pin), num_leds)
+    def __init__(self, pin_obj, num_leds):
+        raw_pin = Pin(pin_obj.pin)
+        self._np = NeoPixel(raw_pin, num_leds)
         self._num_leds = num_leds
 
     def show(self, index, color):
@@ -122,19 +90,56 @@ class RGBLed:
             self._np[index - 1] = color
         self._np.write()
 
+# NUÔI CHÓ
+wdt = WDT(timeout=15000)
+
+# KHỞI TẠO CHÂN
+display.show(Image.HEART)
+i2c = SoftI2C(scl=Pin(22), sda=Pin(21)) 
+rgb = RGBLed(pin16, 4)
+pin12.servo_write(0)
+PIN_MAP = {"P0": pin0, "P1": pin1, "P2": pin2}
+for pin_name in PIN_MAP: PIN_MAP[pin_name].write_analog(0)
+
+WIFI_SSID, WIFI_PASS = "G35", "12345678"
+MQTT_BROKER = "10.23.151.71"
+ID = ubinascii.hexlify(unique_id()).decode()
+
+# Topics
+TOPIC_ANNOUNCE = f"smart_home/hardware/{ID}/announce"
+TOPIC_SEN = f"smart_home/hardware/{ID}/sensor"
+TOPIC_COM = f"smart_home/hardware/{ID}/command"
+TOPIC_STA = f"smart_home/hardware/{ID}/state"
+
+# Trạng thái WiFi
+W_DISCONNECTED, W_WAITING_ACTIVATE, W_CONNECTING, W_CONNECTED = 0, 1, 2, 3
+wifi_state = W_DISCONNECTED
+wifi_timer = 0
+
+# Trạng thái MQTT
+M_IDLE, M_CONNECTING, M_SETUP, M_READY = 0, 1, 2, 3
+mqtt_state = M_IDLE
+mqtt_timer = 0
+
+
 # KHỞI TẠO, VÒNG LẬP CHÍNH
 dht = None
-try: dht = DHT20(i2c)
-except: print("No DHT20")
+try:
+    dht = DHT20(i2c)
+except Exception as e:
+    print("[ERROR] No DHT20:", e)
 servo_is_open, open_start_time = False, 0
 last_dht_trigger, last_display_time = 0, 0
 
 # --- HÀM HELPER ---
-def set_servo(angle, is_on):
-    """Điều khiển servo của Yolobit"""
+def control_servo(angle, is_on):
+    global servo_is_open, open_start_time
+    
     target_angle = angle if is_on else 0
-    pin12.servo_write(target_angle)
-    return is_on
+    pin12.servo_write(target_angle)   
+    servo_is_open = is_on
+    if is_on:
+        open_start_time = time.ticks_ms()
 
 def set_pwm_pin(pin_obj, val, is_on):
     """Tính mức cho quạt"""
@@ -147,55 +152,57 @@ def set_pwm_pin(pin_obj, val, is_on):
 
 # --- HÀM XỬ LÝ LỆNH COMMAND VÀ PHẢN HỒI LẠI ---        
 def sub_cb(topic, msg):
-    global servo_is_open, open_start_time, last_display_time
+    global last_display_time
     try:
         data = json.loads(msg)
-        pn = data.get("pin")
-        val = int(data.get("value", 0))
-        stat = data.get("is_on", False)
-        curr_status = "error"
-
-        # Điều khiển servo
-        if pn == "servo":
-            servo_is_open = stat
-            pin12.servo_write(val if stat else 0)
-            if stat: open_start_time = time.ticks_ms()
-            curr_status = "success"
-
-        # Điều khiển đèn/quạt
-        elif pn in PIN_MAP:
-            set_pwm_pin(PIN_MAP[pn], val, stat)
-            curr_status = "success"
-        
-        elif pn in ["L1", "L2", "L3", "L4"]:
-            if stat:
-                if val == 1023:
-                    # Màu xanh dương, đỏ, vàng, xanh lá, cho 4 đèn
-                    colors = {"L1": (0, 0, 255), "L2": (255, 0, 0), "L3": (255, 255, 0), "L4": (0, 255, 0)}
-                    color = colors.get(pn, (255, 255, 255))
-                else:
-                    b = int(val / 4)
-                    color = (b, b, b)
-            else:
-                color = (0, 0, 0) # Tắt đèn
-            
-            # Gửi lệnh ra mạch LED
-            idx = int(pn[1:]) 
-            rgb.show(idx, color)
-            curr_status = "success"
-
-        if curr_status == "success": 
-            display.show(Image.YES)
-        else: 
-            display.show(Image.NO)
-
-        last_display_time = time.ticks_ms()
-        payload = {"pin": pn, "is_on": stat, "value": val, "status": curr_status}
-        client.publish(TOPIC_STA, json.dumps(payload))
-    
     except Exception as e:
-        display.show(Image.SAD)
-        print("[ERROR] MQTT Callback:", e)
+        print("[ERROR] Invalid JSON:", e)
+        return
+        
+    pn = data.get("pin")
+    val = int(data.get("value", 0))
+    stat = data.get("is_on", False)
+    curr_status = "error"
+
+    # Điều khiển servo
+    if pn == "servo":
+        control_servo(val, stat)
+        curr_status = "success"
+
+    # Điều khiển đèn/quạt
+    elif pn in PIN_MAP:
+        set_pwm_pin(PIN_MAP[pn], val, stat)
+        curr_status = "success"
+    
+    elif pn in ["L1", "L2", "L3", "L4"]:
+        if stat:
+            if val == 1023:
+                # Màu xanh dương, đỏ, vàng, xanh lá, cho 4 đèn
+                colors = {"L1": (0, 0, 255), "L2": (255, 0, 0), "L3": (255, 255, 0), "L4": (0, 255, 0)}
+                color = colors.get(pn, (255, 255, 255))
+            else:
+                b = int(val / 4)
+                color = (b, b, b)
+        else:
+            color = (0, 0, 0)
+        
+        # Gửi lệnh ra mạch LED
+        idx = int(pn[1:]) 
+        rgb.show(idx, color)
+        curr_status = "success"
+
+    if curr_status == "success": 
+        display.show(Image.YES)
+    else: 
+        display.show(Image.NO)
+
+    last_display_time = time.ticks_ms()
+    payload = {"pin": pn, "is_on": stat, "value": val, "status": curr_status}
+    try:
+        client.publish(TOPIC_STA, json.dumps(payload))
+    except Exception as e:
+        print("[ERROR] Publish state:", e)
+    
 
     # --- 5. NETWORK CONNECTION ---
 wlan = network.WLAN(network.STA_IF)
@@ -211,16 +218,19 @@ def manage_wifi_async(now):
             wifi_timer = now
             wifi_state = W_WAITING_ACTIVATE
             print("[WIFI] Mất kết nối, đang thử lại...")
+
         elif wifi_state == W_WAITING_ACTIVATE:
             if time.ticks_diff(now, wifi_timer) > 500:
                 try:
                     wlan.active(True)
                     wlan.connect(WIFI_SSID, WIFI_PASS)
-                except: pass
+                except Exception as e:
+                    print("[WIFI] connect:", e)
                 wifi_state = W_CONNECTING
                 wifi_timer = now
+            
         elif wifi_state == W_CONNECTING:
-            if time.ticks_diff(now, wifi_timer) > 10000: # Timeout sau 10s
+            if time.ticks_diff(now, wifi_timer) > 10000:
                 wifi_state = W_DISCONNECTED
     else:
         if wifi_state != W_CONNECTED:
@@ -228,29 +238,31 @@ def manage_wifi_async(now):
             wifi_state = W_CONNECTED
 
 def manage_mqtt_async(now):
-    global mqtt_state, mqtt_timer, mqtt_setup_done
+    global mqtt_state, mqtt_timer
     if not HAS_MQTT_LIB or not wlan.isconnected():
-        mqtt_state, mqtt_setup_done = M_IDLE, False
+        if mqtt_state != M_IDLE: 
+            print("[MQTT] Tạm ngưng do mất WiFi.")
+        mqtt_state = M_IDLE
         return
 
     if mqtt_state == M_IDLE:
         mqtt_state = M_CONNECTING
         mqtt_timer = now - 5001
+
     elif mqtt_state == M_CONNECTING:
         if time.ticks_diff(now, mqtt_timer) > 5000:
             try:
-                if client.connect() == 0: mqtt_state = M_SUBSCRIBING
+                if client.connect() == 0: 
+                    mqtt_state = M_SETUP
+                    print("[MQTT] Kết nối Broker thành công!")
             except Exception as e:
-                print("[MQTT] Connect Retry...", e)
+                print("[MQTT] Lỗi kết nối Broker, thử lại sau 5s:", e)
             mqtt_timer = now
-    elif mqtt_state == M_SUBSCRIBING:
+    elif mqtt_state == M_SETUP:
         try:
+            # Đăng ký nghe topic nhận lệnh
             client.subscribe(TOPIC_COM)
-            mqtt_state = M_ANNOUNCING
-        except Exception as e:
-            mqtt_state = M_CONNECTING
-    elif mqtt_state == M_ANNOUNCING:
-        try:
+            # Gửi cấu hình lên server
             ann = {
                 "name": f"Yolobit_{ID}",
                 "pins": [
@@ -267,29 +279,28 @@ def manage_mqtt_async(now):
                 ]
             }
             client.publish(TOPIC_ANNOUNCE, json.dumps(ann))
-            mqtt_state, mqtt_setup_done = M_READY, True
-            print("[MQTT] Ready & announce with pin types")
+            mqtt_state = M_READY
+            print("[MQTT] Đã cấu hình! Mạch sẵn sàng gửi/nhận dữ liệu.")
         except Exception as e:
             mqtt_state = M_CONNECTING
+            print("[MQTT] Lỗi thiết lập, thử lại:", e)
     elif mqtt_state == M_READY:
         try:
             client.check_msg()
         except Exception as e:
-            print("[MQTT] Broker disconnected:", e)
-            mqtt_state, mqtt_setup_done = M_IDLE, False
+            print("[MQTT] Mất kết nối Broker:", e)
+            mqtt_state = M_IDLE
 
 while True:
     now = time.ticks_ms()
     wdt.feed()
-
-    # Chạy tiến trình mạng 
     manage_wifi_async(now)
     manage_mqtt_async(now)
     
     # Local: Auto-close servo
     if servo_is_open and time.ticks_diff(now, open_start_time) > 8000:
-        servo_is_open = set_servo(0, False)
-        if mqtt_setup_done:
+        control_servo(0, False)
+        if mqtt_state == M_READY:
             try:
                 payload = {"pin": "servo", "is_on": False, "value": 0, "status": "success"}
                 client.publish(TOPIC_STA, json.dumps(payload))
@@ -298,11 +309,10 @@ while True:
 
     # Nút nhấn A để mở khóa (demo)
     if button_a.is_pressed():
-        servo_is_open = set_servo(90, True)
-        open_start_time = now
+        control_servo(90, True)
         last_display_time = now
         display.show(Image.YES)
-        if mqtt_setup_done:
+        if mqtt_state == M_READY:
             try:
                 payload = {"pin": "servo", "is_on": True, "value": 90, "status": "success"}
                 client.publish(TOPIC_STA, json.dumps(payload))
@@ -319,11 +329,12 @@ while True:
 
     if dht and dht.is_collecting and dht.collect_data():
         print(f"[INFO] Sensor: {dht.temp()}oC, {dht.humi()}%")
-        if mqtt_setup_done:
+        if mqtt_state == M_READY:
             try: 
                 payload = {"temp": dht.temp(), "humi": dht.humi()}
                 client.publish(TOPIC_SEN, json.dumps(payload))
-            except: pass
+            except:
+                pass
 
     # Báo mạch còn sống
     if time.ticks_diff(now, last_display_time) > 2000:
