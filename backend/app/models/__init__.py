@@ -1,5 +1,4 @@
 
-from app.models.dashboard import Dashboard, DashboardWidget
 from app.models.device import Device
 from app.models.device_schedule import DeviceSchedule
 from app.models.face_enrollment import FaceEnrollment
@@ -8,7 +7,6 @@ from app.models.invitation_key import InvitationKey
 from app.models.user import User
 
 __all__ = [
-    "DashboardWidget",
     "Device",
     "DeviceSchedule",
     "FaceEnrollment",

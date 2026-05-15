@@ -10,7 +10,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from app.core.config import settings  # noqa: E402
 from app.db.session import Base  # noqa: E402
-import app.models.dashboard  # noqa: E402, F401
 import app.models.device  # noqa: E402, F401
 import app.models.device_schedule  # noqa: E402, F401
 import app.models.face_enrollment  # noqa: E402, F401

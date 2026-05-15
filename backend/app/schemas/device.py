@@ -29,15 +29,14 @@ class DeviceCreate(DeviceBase):
 class DeviceUpdate(BaseModel):
     name: Optional[str] = None
     room: Optional[str] = None
-    type: Optional[DeviceType] = None
     description: Optional[str] = None
     meta_data: Optional[Dict[str, Any]] = None
 
 
 class DeviceRead(DeviceBase):
     id: str
-    is_on: bool
-    value: float
+    is_on: Optional[bool] = None
+    value: Optional[float] = None
     last_seen_at: Optional[datetime] = None
     model_config = ConfigDict(from_attributes=True)
 
@@ -63,3 +62,12 @@ class DeviceControlRequest(BaseModel):
         if self.is_on is None and self.value is None:
             raise ValueError("At least one of 'is_on' or 'value' must be provided")
         return self
+
+class SensorDataRead(BaseModel):
+    id: int
+    device_id: Optional[str]
+    value: float
+    sensor_type: DeviceType
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
