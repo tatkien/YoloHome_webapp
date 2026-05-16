@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import sqlalchemy as sa
 from fastapi import WebSocket, WebSocketDisconnect, WebSocketException, status
 from collections import defaultdict
@@ -7,6 +8,7 @@ from app.db.session import AsyncSessionLocal
 from app.models.user import User
 from app.core.logger import logger
 from app.core.config import settings
+from app.core.voice_stream import voice_streamer
 
 class WsService:
     """
@@ -52,7 +54,6 @@ class WsService:
 
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                # Nếu gửi lỗi, xóa kết nối "chết"
                 self._remove_connection(user_id, targets[i])
                 logger.debug(f"[WsService Cleanup] Removed stale connection for user {user_id}")
     
@@ -91,21 +92,36 @@ class WsService:
                 raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
 
     async def handle_connection(self, websocket: WebSocket, token: str | None) -> None:
-        # 1. Authenticate and resolve user
+        # Authenticate and resolve user
         user = await self.authenticate_ws_user(websocket, token)
 
-        # 2. Accept connection and register in manager
+        # Accept connection and register in manager
         await self.connect_user(user.id, websocket)
         await websocket.send_json({"type": "connection.ready", "user_id": user.id})
 
-        # 3. Keep connection alive with idle timeout
+        # Keep connection alive with idle timeout
         try:
             while True:
-                data = await asyncio.wait_for(
-                    websocket.receive_json(), timeout=settings.WS_IDLE_TIMEOUT_SECONDS
+                # receive() nhận cả bytes và text
+                message = await asyncio.wait_for(
+                    websocket.receive(), timeout=settings.WS_IDLE_TIMEOUT_SECONDS
                 )
-                if data.get("type") == "ping":
-                    await websocket.send_json({"type": "pong"})
+                
+                if message["type"] == "websocket.disconnect":
+                    break
+                
+                if "text" in message:
+                    import json
+                    data = json.loads(message["text"])
+                    if data.get("type") == "ping":
+                        await websocket.send_json({"type": "pong"})
+                    elif data.get("type") == "voice.source":
+                        # Chuyển nguồn trực tiếp ở VoiceStreamer
+                        await voice_streamer.set_source(data.get("source"))
+
+                elif "bytes" in message:
+                    # Đẩy vào VoiceStreamer
+                    voice_streamer.push_chunk(message["bytes"])
 
         except asyncio.TimeoutError:
             await websocket.close(code=1000, reason="Idle timeout")

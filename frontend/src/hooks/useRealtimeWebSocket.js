@@ -49,6 +49,13 @@ export function useRealtimeWebSocket(token) {
       }
     };
 
+    // Listener để nhận lệnh gửi dữ liệu từ các component khác
+    const handleSend = (e) => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(e.detail);
+      }
+    };
+
     const connect = () => {
       if (stopped) return;
       if (!tokenRef.current) return;
@@ -91,11 +98,13 @@ export function useRealtimeWebSocket(token) {
       };
     };
 
+    window.addEventListener('yolohome:ws:send', handleSend);
     connect();
 
     return () => {
       stopped = true;
       clearTimers();
+      window.removeEventListener('yolohome:ws:send', handleSend);
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
         ws.close();
       }

@@ -6,24 +6,58 @@ logger = logging.getLogger("yolohome")
 
 class VoiceStreamer:
     """
-    Duy trì luồng dữ liệu âm thanh liên tục từ mic ngoài.
-    Luồng: [IP Mic] --(HTTP dạng .wav)--> [FFmpeg] --(Raw PCM)--> [Async Queue]
+    Duy trì luồng dữ liệu âm thanh liên tục từ mic ngoài (IP Webcam) hoặc trình duyệt.
+    Luồng: [Nguồn] --(Raw PCM)--> [Async Queue]
     """
     def __init__(self):
         self.stream_url = settings.IP_WEBCAM_AUDIO_URL
         self.is_running = False
         self.audio_queue = asyncio.Queue(maxsize=400)
         self.is_connected = False
+        self.source = "ip_webcam"  # "ip_webcam" hoặc "browser"
         self._task = None
         self._process = None 
 
     async def start(self):
-        if self.is_running or not self.stream_url:
+        if self.is_running:
+            return
+        self.is_running = True
+        
+        # Chạy FFmpeg nếu nguồn là ip_webcam
+        if self.source == "ip_webcam" and self.stream_url:
+            self._task = asyncio.create_task(self._listen_to_stream())
+            logger.info(f"[VoiceStreamer] Khởi động IP Webcam. Target: {self.stream_url}")
+        else:
+            logger.info("[VoiceStreamer] Chờ dữ liệu từ Browser Mic...")
+            self.is_connected = True
+
+    async def set_source(self, source: str):
+        """Thay đổi nguồn âm thanh: 'ip_webcam' hoặc 'browser'"""
+        if source not in ["ip_webcam", "browser"] or self.source == source:
+            return
+        
+        logger.info(f"[VoiceStreamer] Switching source to: {source}")
+        self.source = source
+        
+        if self.is_running:
+            if source == "ip_webcam":
+                if not self._task or self._task.done():
+                    self._task = asyncio.create_task(self._listen_to_stream())
+            else:
+                if self._process:
+                    self._process.terminate()
+                if self._task:
+                    self._task.cancel()
+
+    def push_chunk(self, chunk: bytes):
+        """Đẩy dữ liệu âm thanh trực tiếp vào queue (Browser Mic)"""
+        if not self.is_running or self.source != "browser":
             return
             
-        self.is_running = True
-        self._task = asyncio.create_task(self._listen_to_stream())
-        logger.info(f"[VoiceStreamer] Đã kích hoạt service lắng nghe âm thanh. Target: {self.stream_url}")
+        if self.audio_queue.full():
+            try: self.audio_queue.get_nowait()
+            except: pass
+        self.audio_queue.put_nowait(chunk)
 
     async def stop(self):
         self.is_running = False
@@ -35,17 +69,9 @@ class VoiceStreamer:
                 if self._process: self._process.kill()
         if self._task:
             self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
         logger.info("[VoiceStreamer] Service thu âm thanh đã tắt.")
             
     async def get_audio_chunk(self):
-        """
-        Cung cấp dữ liệu cho VoiceLogicService. 
-        Hàm này await cho đến khi có dữ liệu mới trong queue.
-        """
         return await self.audio_queue.get()
     
     async def _watch_ffmpeg_errors(self, stderr_stream):
@@ -69,7 +95,7 @@ class VoiceStreamer:
                 if not self.stream_url:
                     break
 
-                logger.info(f"[VoiceStreamer] FFmpeg đang kết nối đến {self.stream_url}...")   
+                logger.debug(f"[VoiceStreamer] FFmpeg đang kết nối đến {self.stream_url}...")   
                 # Đọc input HTTP -> xuất Raw định dạng 16-bit PCM, Rate 16000Hz, 1 kênh
                 self._process = await asyncio.create_subprocess_exec(
                     'ffmpeg', 
@@ -95,7 +121,7 @@ class VoiceStreamer:
                 while self.is_running:
                     chunk = await self._process.stdout.read(CHUNK_SIZE)
                     if not chunk:
-                        logger.warning("[VoiceStreamer] Luồng dữ liệu trống (End of Stream).")
+                        logger.debug("[VoiceStreamer] Luồng dữ liệu trống (End of Stream).")
                         break
 
                     if first_chunk:
@@ -138,8 +164,8 @@ class VoiceStreamer:
                 self._process = None
             
             if self.is_running:
-                    logger.warning("[VoiceStreamer] Thử lại sau 3 giây...")
-                    await asyncio.sleep(3)
+                    logger.debug("[VoiceStreamer] Thử lại sau 10 giây...")
+                    await asyncio.sleep(10)
         logger.info("[VoiceStreamer] Vòng lặp thu Audio đã kết thúc.")
 
 # Khởi tạo instance

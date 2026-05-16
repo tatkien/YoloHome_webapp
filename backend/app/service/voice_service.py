@@ -115,15 +115,13 @@ class VoiceService:
     # Lifecycle
 
     async def start(self):
-        if not settings.IP_WEBCAM_AUDIO_URL:
-            logger.warning("[VoiceService] IP_WEBCAM_AUDIO_URL chưa cấu hình, bỏ qua.")
-            return
         if self.is_running:
             return
         self.is_running = True
         
-        # Bật luồng âm thanh
-        await voice_streamer.start()       
+        # Bật trạm thu âm
+        await voice_streamer.start()
+        
         self._task = asyncio.create_task(self._listen_and_process())
         await asyncio.to_thread(self._load_models)
 
@@ -199,12 +197,14 @@ class VoiceService:
     async def _listen_and_process(self):
         """
         Vòng lặp chính:
-          - Chờ model load -> Quét wake word -> thu lệnh -> gửi Whisper.
+          - Gom dữ liệu vào buffer, băm nhỏ đúng 960 bytes (30ms).
+          - Quét wake word -> thu lệnh -> gửi Whisper.
         """
         pre_roll        = deque(maxlen=PRE_ROLL_CHUNKS)
         collecting      = False
         command_chunks  = []
         silence_count   = 0
+        audio_buffer    = b""
 
         logger.info("[VoiceService] Bắt đầu lắng nghe âm thanh...")
         await self._send_status("idle")
@@ -215,60 +215,60 @@ class VoiceService:
             try:
                 # Theo dõi trạng thái kết nối từ Streamer
                 try:
-                    chunk = await asyncio.wait_for(voice_streamer.get_audio_chunk(), timeout=1.0)
+                    raw_data = await asyncio.wait_for(voice_streamer.get_audio_chunk(), timeout=1.0)
+                    audio_buffer += raw_data
                 except asyncio.TimeoutError:
-                    # Timeout mà Streamer báo mất kết nối
                     if not voice_streamer.is_connected and last_conn_state:
                         last_conn_state = False
                         await self._sync_mic_status(False)
                     continue
 
-                # Nếu có dữ liệu, kiểm tra xem có kết nối lại không
-                if voice_streamer.is_connected and not last_conn_state:
-                    last_conn_state = True
-                    await self._sync_mic_status(True)
-                pre_roll.append(chunk)
-                samples = np.frombuffer(chunk, dtype=np.int16)
-                
-                # WebRTC VAD 30 ms 16000 Hz
-                is_speech = False
-                if len(chunk) == 960:
-                    is_speech = self.vad.is_speech(chunk, 16000)
+                # 2. Băm nhỏ dữ liệu thành từng miếng 960 bytes (30ms) để VAD hoạt động chuẩn
+                while len(audio_buffer) >= 960:
+                    chunk = audio_buffer[:960]
+                    audio_buffer = audio_buffer[960:]
 
-                # Gửi RMS qua WebSocket
-                self._vibe_counter += 1
-                if self._vibe_counter % 6 == 0:
+                    # Cập nhật trạng thái kết nối
+                    if voice_streamer.is_connected and not last_conn_state:
+                        last_conn_state = True
+                        await self._sync_mic_status(True)
+                        
+                    pre_roll.append(chunk)
+                    samples = np.frombuffer(chunk, dtype=np.int16)
+                    is_speech = self.vad.is_speech(chunk, 16000)
+                    
+                    # Gửi RMS
                     rms = np.sqrt(np.mean(np.square(samples.astype(np.float32))))
                     await self._send_vibe(rms, collecting)
 
-                if self.kws_model is None or self.kws_stream is None: continue
+                    if self.kws_model is None or self.kws_stream is None: continue
 
                 # Wake word detection
-                if not self.inferring and not collecting:
-                    audio_float = samples.astype(np.float32) / 32768.0 
+                    if not self.inferring and not collecting:
+                        audio_float = samples.astype(np.float32) / 32768.0 
                     # Chạy quét từ khóa
-                    result = await asyncio.to_thread(self._process_kws_sync, audio_float)
-                    if result:
-                        logger.info(f"[WakeWord] Phát hiện: '{result.strip()}'")
-                        collecting     = True
-                        command_chunks = list(pre_roll)
-                        self.kws_model.reset_stream(self.kws_stream) 
-                        await self._send_status("active")
+                        result = await asyncio.to_thread(self._process_kws_sync, audio_float)
+                        if result:
+                            logger.info(f"[WakeWord] Phát hiện: '{result.strip()}'")
+                            collecting     = True
+                            command_chunks = list(pre_roll)
+                            self.kws_model.reset_stream(self.kws_stream) 
+                            await self._send_status("active")
 
-                elif collecting:
-                    command_chunks.append(chunk) 
-                    if is_speech:
-                        silence_count = 0
-                    else:
-                        silence_count += 1
-                        
+                    elif collecting:
+                        command_chunks.append(chunk) 
+                        if is_speech:
+                            silence_count = 0
+                        else:
+                            silence_count += 1
+                            
                     # Nếu im lặng lâu hoặc lệnh quá dài
-                    if silence_count >= MIN_SILENCE_CHUNKS or len(command_chunks) >= MAX_COMMAND_CHUNKS:
-                        logger.info(f"[VoiceService] Đã thu xong lệnh ({len(command_chunks)} chunks).")
-                        collecting = False
-                        await self._send_status("thinking")
-                        asyncio.create_task(self._infer_audio(command_chunks))
-                        command_chunks = []
+                        if silence_count >= MIN_SILENCE_CHUNKS or len(command_chunks) >= MAX_COMMAND_CHUNKS:
+                            logger.info(f"[VoiceService] Đã thu xong lệnh ({len(command_chunks)} chunks).")
+                            collecting = False
+                            await self._send_status("thinking")
+                            asyncio.create_task(self._infer_audio(command_chunks))
+                            command_chunks = []
 
             except asyncio.CancelledError:
                 break

@@ -60,14 +60,14 @@ function SensorChart({ sensor, color }) {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await api.get('/devices/sensor-data', { 
-        params: { 
+      const res = await api.get('/devices/sensor-data', {
+        params: {
           device_id: sensor.id,
           sensor_type: sensor.type,
-          range: range 
-        } 
+          range: range
+        }
       });
-      
+
       const points = [...res.data].reverse().map((item) => {
         const d = new Date(item.created_at);
         let timeLabel = formatTime(item.created_at);
@@ -98,7 +98,7 @@ function SensorChart({ sensor, color }) {
       ) {
         const val = parseFloat(payload.data[sensor.pin]);
         if (!isNaN(val)) {
-          setLocalValue(val); 
+          setLocalValue(val);
           if (range === '1h') {
             const newPoint = {
               time: formatTime(new Date().toISOString()),
@@ -129,7 +129,7 @@ function SensorChart({ sensor, color }) {
           <span className="fw-semibold small">{sensor.name}</span>
           <Badge bg="light" text="dark" className="border small d-none d-sm-inline-block">{sensor.room || 'No room'}</Badge>
         </div>
-        
+
         {/* Time Range Selector */}
         <div className="d-flex align-items-center gap-2">
           <ButtonGroup size="sm" className="me-2 shadow-sm">
@@ -244,9 +244,52 @@ export default function HomePage() {
   const [devicesLoading, setDevicesLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const [voiceStatus, setVoiceStatus] = useState('idle'); // idle, active, thinking
+  const [voiceStatus, setVoiceStatus] = useState('idle');
+  const [audioSource, setAudioSource] = useState('ip_webcam');
   const [voiceText, setVoiceText] = useState('');
   const [rms, setRms] = useState(0);
+
+  useEffect(() => {
+    const micDevice = devices.find(d => d.type === 'microphone');
+    if (!micDevice || !micDevice.is_on || audioSource !== 'browser') return;
+
+    let audioContext, processor, input, stream;
+
+    const startRecording = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        input = audioContext.createMediaStreamSource(stream);
+        processor = audioContext.createScriptProcessor(1024, 1, 1);
+
+        processor.onaudioprocess = (e) => {
+          const floatData = e.inputBuffer.getChannelData(0);
+          const pcm16 = new Int16Array(floatData.length);
+          for (let i = 0; i < floatData.length; i++) {
+            const s = Math.max(-1, Math.min(1, floatData[i]));
+            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+          }
+          // Gửi binary qua WebSocket chung
+          window.dispatchEvent(new CustomEvent('yolohome:ws:send', { detail: pcm16.buffer }));
+        };
+
+        input.connect(processor);
+        processor.connect(audioContext.destination);
+      } catch (err) {
+        console.error("Mic error:", err);
+        setAudioSource('ip_webcam');
+      }
+    };
+
+    startRecording();
+
+    return () => {
+      if (processor) processor.disconnect();
+      if (input) input.disconnect();
+      if (audioContext) audioContext.close();
+      if (stream) stream.getTracks().forEach(t => t.stop());
+    };
+  }, [devices, audioSource]);
 
   const fetchDevices = useCallback(async () => {
     try {
@@ -265,7 +308,7 @@ export default function HomePage() {
         setVoiceStatus(payload.data.status);
         if (payload.data.text) setVoiceText(payload.data.text);
         if (payload.data.status === 'active') setVoiceText('');
-      }  
+      }
       else if (payload.event === 'voice.vibe') {
         setRms(payload.data.volume);
       }
@@ -277,8 +320,8 @@ export default function HomePage() {
         }));
       } else if (payload.event === 'device_update') {
         setDevices((prev) => prev.map(d =>
-          d.id === payload.device_id 
-            ? { ...d, is_on: payload.data.is_on, value: payload.data.value, pending: payload.data.pending } 
+          d.id === payload.device_id
+            ? { ...d, is_on: payload.data.is_on, value: payload.data.value, pending: payload.data.pending }
             : d
         ));
       }
@@ -292,6 +335,14 @@ export default function HomePage() {
     try {
       await api.post(`/devices/${deviceId}/command`, { is_on: isOn, value });
     } catch (err) { console.error('Failed to send command', err); fetchDevices(); }
+  };
+
+  const handleSourceChange = (source) => {
+    // Gửi lệnh đổi nguồn qua WebSocket
+    window.dispatchEvent(new CustomEvent('yolohome:ws:send', { 
+      detail: JSON.stringify({ type: 'voice.source', source }) 
+    }));
+    setAudioSource(source);
   };
 
   const renderDeviceValue = (d) => {
@@ -382,119 +433,152 @@ export default function HomePage() {
                   <Card className="shadow-sm border h-100">
                     <Card.Body className="p-3">
                       {d.type === 'microphone' ? (
-                     <>
-                        <div className="d-flex justify-content-between align-items-start mb-2">
-                          <div className="position-relative">
-                            <span 
-                              className={`fs-4 ${voiceStatus === 'thinking' ? 'spinner-border spinner-border-sm text-primary mb-2' : ''}`} 
-                              style={{ display: 'inline-block', width: '30px', height: '30px' }}
-                            >
-                              {voiceStatus === 'thinking' ? '' : (DEVICE_ICONS[d.type] || '🎙️')}
-                            </span>
-                            {voiceStatus === 'active' && d.is_on && (
-                              <div className="position-absolute top-50 start-50 translate-middle" 
-                                style={{ 
-                                  width: `${30 + rms/3}px`, height: `${30 + rms/3}px`, 
-                                  backgroundColor: 'rgba(220, 53, 69, 0.3)', borderRadius: '50%', zIndex: -1 
-                                }}>
-                              </div>
-                            )}
-                          </div>
-                          <Badge bg={
-                            !d.is_on ? 'secondary' : 
-                            voiceStatus === 'active' ? 'danger' : 
-                            voiceStatus === 'thinking' ? 'primary' : 'success'
-                          }>
-                            {!d.is_on ? 'OFF' : voiceStatus.toUpperCase()}
-                          </Badge>
-                        </div>
-                        <p className="fw-semibold small mb-0">{d.name}</p>
-                        <p className="text-muted small mb-2">{d.room || 'System'}</p>
-                        {d.is_on && (
-                          <div className="mt-3">
-                            <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.65rem' }}>
-                              <span className="text-muted">Volume</span>
-                              <span className={voiceStatus === 'active' ? 'text-danger fw-bold' : 'text-primary'}>{rms}%</span>
-                            </div>
-                            <div style={{ width: '100%', height: '6px', backgroundColor: '#e9ecef', borderRadius: '3px', overflow: 'hidden' }}>
-                              <div style={{ 
-                                width: `${rms}%`, height: '100%', 
-                                backgroundColor: voiceStatus === 'active' ? '#dc3545' : '#0d6efd',
-                                transition: 'width 0.1s ease-out, background-color 0.3s'
-                              }}></div>
-                            </div>
-                            <div className="mt-2 text-truncate" style={{ fontSize: '0.75rem', color: voiceText ? '#000' : '#adb5bd', fontStyle: 'italic', minHeight: '18px' }}>
-                              {voiceText ? `"${voiceText}"` : (voiceStatus === 'idle' ? "Nói 'Go Home'..." : "...")}
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    ) : (
-
-                      <>
-                      <div className="d-flex justify-content-between align-items-start mb-2">
-                        <span className="fs-4">
-                          {d.pending ? <Spinner animation="border" size="sm" className="text-primary" /> : (DEVICE_ICONS[d.type] || '📦')}
-                        </span>
-                        <Badge bg={d.pending ? 'warning' : (d.is_on ? 'success' : 'secondary')} text={d.pending ? 'dark' : 'white'}>
-                          {d.pending ? 'WAIT...' : (d.is_on ? 'ON' : 'OFF')}
-                        </Badge>
-                      </div>
-
-                      <p className="fw-semibold small mb-0">{d.name}</p>
-                      <p className="text-muted small mb-2">{d.room || 'No room'}</p>
-
-                      {d.type === 'light' && (
-                        <Form.Check
-                          type="switch"
-                          id={`sw-${d.id}`}
-                          label={d.is_on ? 'On' : 'Off'}
-                          checked={d.is_on}
-                          disabled={d.pending}
-                          onChange={e => handleDeviceCommand(d.id, e.target.checked, e.target.checked ? null : 0)}
-                          className={d.is_on ? 'text-success' : 'text-muted'}
-                        />
-                      )}
-
-                      {d.type === 'fan' && (
                         <>
+                          <div className="d-flex justify-content-between align-items-start mb-2">
+                            <div className="position-relative">
+                              <span
+                                className={`fs-4 ${voiceStatus === 'thinking' ? 'spinner-border spinner-border-sm text-primary mb-2' : ''}`}
+                                style={{ display: 'inline-block', width: '30px', height: '30px' }}
+                              >
+                                {voiceStatus === 'thinking' ? '' : (DEVICE_ICONS[d.type] || '🎙️')}
+                              </span>
+                              {voiceStatus === 'active' && d.is_on && (
+                                <div className="position-absolute top-50 start-50 translate-middle"
+                                  style={{
+                                    width: `${30 + rms / 3}px`, height: `${30 + rms / 3}px`,
+                                    backgroundColor: 'rgba(220, 53, 69, 0.3)', borderRadius: '50%', zIndex: -1
+                                  }}>
+                                </div>
+                              )}
+                            </div>
+                            <Badge bg={
+                              !d.is_on ? 'secondary' :
+                                voiceStatus === 'active' ? 'danger' :
+                                  voiceStatus === 'thinking' ? 'primary' : 'success'
+                            }>
+                              {!d.is_on ? 'OFF' : voiceStatus.toUpperCase()}
+                            </Badge>
+                          </div>
+                          <p className="fw-semibold small mb-0">{d.name}</p>
+                          <p className="text-muted small mb-2">{d.room || 'System'}</p>
+
                           <Form.Check
                             type="switch"
                             id={`sw-${d.id}`}
                             label={d.is_on ? 'On' : 'Off'}
                             checked={d.is_on}
                             disabled={d.pending}
-                            onChange={e => {
-                              const on = e.target.checked;
-                              handleDeviceCommand(d.id, on, on ? (d.value > 0 ? d.value : 1) : 0);
-                            }}
-                            className={`mb-2 ${d.is_on ? 'text-success' : 'text-muted'}`}
+                            onChange={e => handleDeviceCommand(d.id, e.target.checked, e.target.checked ? 1 : 0)}
+                            className={`mb-3 ${d.is_on ? 'text-success' : 'text-muted'}`}
                           />
+
                           {d.is_on && (
-                            <ButtonGroup size="sm" className="w-100">
-                              {[1, 2, 3].map(lvl => (
-                                <Button
-                                  key={lvl}
-                                  variant={d.value === lvl ? 'primary' : 'outline-primary'}
-                                  disabled={d.pending}
-                                  onClick={() => handleDeviceCommand(d.id, true, lvl)}
+                            <div className="mb-3">
+                              <p className="text-muted mb-1" style={{ fontSize: '0.65rem' }}>Source:</p>
+                              <ButtonGroup size="sm" className="w-100">
+                                <Button 
+                                  variant={audioSource === 'ip_webcam' ? 'primary' : 'outline-primary'}
+                                  onClick={() => handleSourceChange('ip_webcam')}
+                                  style={{ fontSize: '0.65rem' }}
                                 >
-                                  {lvl}
+                                  Yolobit
                                 </Button>
-                              ))}
-                            </ButtonGroup>
+                                <Button 
+                                  variant={audioSource === 'browser' ? 'primary' : 'outline-primary'}
+                                  onClick={() => handleSourceChange('browser')}
+                                  style={{ fontSize: '0.65rem' }}
+                                >
+                                  Web Mic
+                                </Button>
+                              </ButtonGroup>
+                            </div>
+                          )}
+
+                          {d.is_on && (
+                            <div className="mt-2">
+                              <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.65rem' }}>
+                                <span className="text-muted">Volume</span>
+                                <span className={voiceStatus === 'active' ? 'text-danger fw-bold' : 'text-primary'}>{rms}%</span>
+                              </div>
+                              <div style={{ width: '100%', height: '6px', backgroundColor: '#e9ecef', borderRadius: '3px', overflow: 'hidden' }}>
+                                <div style={{
+                                  width: `${rms}%`, height: '100%',
+                                  backgroundColor: voiceStatus === 'active' ? '#dc3545' : '#0d6efd',
+                                  transition: 'width 0.1s ease-out, background-color 0.3s'
+                                }}></div>
+                              </div>
+                              <div className="mt-2 text-truncate" style={{ fontSize: '0.75rem', color: voiceText ? '#000' : '#adb5bd', fontStyle: 'italic', minHeight: '18px' }}>
+                                {voiceText ? `"${voiceText}"` : (voiceStatus === 'idle' ? "Nói 'Go Home'..." : "...")}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+
+                        <>
+                          <div className="d-flex justify-content-between align-items-start mb-2">
+                            <span className="fs-4">
+                              {d.pending ? <Spinner animation="border" size="sm" className="text-primary" /> : (DEVICE_ICONS[d.type] || '📦')}
+                            </span>
+                            <Badge bg={d.pending ? 'warning' : (d.is_on ? 'success' : 'secondary')} text={d.pending ? 'dark' : 'white'}>
+                              {d.pending ? 'WAIT...' : (d.is_on ? 'ON' : 'OFF')}
+                            </Badge>
+                          </div>
+
+                          <p className="fw-semibold small mb-0">{d.name}</p>
+                          <p className="text-muted small mb-2">{d.room || 'No room'}</p>
+
+                          {d.type === 'light' && (
+                            <Form.Check
+                              type="switch"
+                              id={`sw-${d.id}`}
+                              label={d.is_on ? 'On' : 'Off'}
+                              checked={d.is_on}
+                              disabled={d.pending}
+                              onChange={e => handleDeviceCommand(d.id, e.target.checked, e.target.checked ? null : 0)}
+                              className={d.is_on ? 'text-success' : 'text-muted'}
+                            />
+                          )}
+
+                          {d.type === 'fan' && (
+                            <>
+                              <Form.Check
+                                type="switch"
+                                id={`sw-${d.id}`}
+                                label={d.is_on ? 'On' : 'Off'}
+                                checked={d.is_on}
+                                disabled={d.pending}
+                                onChange={e => {
+                                  const on = e.target.checked;
+                                  handleDeviceCommand(d.id, on, on ? (d.value > 0 ? d.value : 1) : 0);
+                                }}
+                                className={`mb-2 ${d.is_on ? 'text-success' : 'text-muted'}`}
+                              />
+                              {d.is_on && (
+                                <ButtonGroup size="sm" className="w-100">
+                                  {[1, 2, 3].map(lvl => (
+                                    <Button
+                                      key={lvl}
+                                      variant={d.value === lvl ? 'primary' : 'outline-primary'}
+                                      disabled={d.pending}
+                                      onClick={() => handleDeviceCommand(d.id, true, lvl)}
+                                    >
+                                      {lvl}
+                                    </Button>
+                                  ))}
+                                </ButtonGroup>
+                              )}
+                            </>
+                          )}
+
+                          {!['light', 'fan'].includes(d.type) && (
+                            <p className={`fw-bold small mb-0 ${(d.is_on || d.value > 0) ? 'text-success' : 'text-muted'}`}>
+                              {renderDeviceValue(d)}
+                            </p>
                           )}
                         </>
                       )}
-
-                      {!['light', 'fan'].includes(d.type) && (
-                      <p className={`fw-bold small mb-0 ${(d.is_on || d.value > 0) ? 'text-success' : 'text-muted'}`}>
-                        {renderDeviceValue(d)}
-                      </p>
-                      )}
-                    </>
-                  )}
-                </Card.Body>
+                    </Card.Body>
                   </Card>
                 </Col>
               ))}

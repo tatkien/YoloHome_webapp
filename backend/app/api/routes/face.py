@@ -28,6 +28,7 @@ from app.schemas.face import (
     FaceRecognizeResult,
 ) 
 from app.schemas.device import DeviceControlRequest
+from app.service.device_service import DeviceService
 
 logger = logging.getLogger(__name__)
 
@@ -425,24 +426,22 @@ async def recognize_face(
         try:
             lock_result = await db.execute(
                 sa.select(Device).where(
-                    Device.hardware_id == camera_device.hardware_id,
                     Device.type == DeviceType.LOCK,
                 )
             )
             lock_device = lock_result.scalar_one_or_none()
             if lock_device:
-                from app.service.command_service import device_command
-                await device_command(
+                await DeviceService.send_command(
                     db=db,
                     device_id=lock_device.id,
                     is_on=True,
-                    value=float(settings.SERVO_OPEN_ANGLE),
+                    value=None,  # tự động lấy default_value (90.0)
                     actor=str(matched_user_id) if matched_user_id else "AutoUnlock",
                     source="Face Auto-Unlock"
                 )
                 door_unlocked = True
                 logger.info(
-                    f"[Face] Auto-unlock: sent servo open command (angle={settings.SERVO_OPEN_ANGLE}) "
+                    f"[Face] Auto-unlock: sent servo open command (using device default angle) "
                     f"for lock device {lock_device.id} on hardware {lock_device.hardware_id}"
                 )
         except Exception:
