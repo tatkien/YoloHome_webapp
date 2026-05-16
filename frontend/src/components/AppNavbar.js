@@ -51,6 +51,10 @@ export default function AppNavbar() {
                   Schedules
                 </Nav.Link>             
 
+                <Nav.Link as={Link} to="/voice" active={isActive('/voice')}>
+                  Voice Control
+                </Nav.Link>
+
                 {!isAdmin && (
                   <Nav.Link as={Link} to="/face/logs" active={isActive('/face/logs')}>
                     📋 Face Logs

@@ -11,7 +11,7 @@ import AdminUsersPage from './pages/AdminUsersPage';
 import FaceEnrollmentsPage from './pages/FaceEnrollmentsPage';
 import FaceLogsPage from './pages/FaceLogsPage';
 import DeviceSchedulesPage from './pages/DeviceSchedulesPage';
-
+import VoiceControlPage from './pages/VoiceControlPage';
 function App() {
   return (
     <Router>
@@ -34,7 +34,7 @@ function App() {
           <Route path="/admin/users" element={<PrivateRoute adminOnly><AdminUsersPage /></PrivateRoute>} />
 
           <Route path="/schedules" element={<PrivateRoute><DeviceSchedulesPage /></PrivateRoute>} />
-            
+          <Route path="/voice" element={<PrivateRoute><VoiceControlPage /></PrivateRoute>} />
         </Routes>
       </AuthProvider>
     </Router>

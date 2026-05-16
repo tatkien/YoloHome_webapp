@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Container, Row, Col, Card, Button, Form, Alert, Badge } from 'react-bootstrap';
-import { Mic, MicOff, Settings, MessageSquare, Terminal, Power } from 'lucide-react';
+import { Mic, MicOff, Settings, Terminal, Power } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 // Các hằng số điều khiển nhịp độ hệ thống
 const CHUNK_MS = 2500;
 const RECONNECT_WAIT_MS = 1500; // Khoảng nghỉ để tái kết nối ổn định
-const PROCESSING_TIMEOUT_MS = 2000; 
 const PREFERRED_MIME = "audio/webm;codecs=opus";
 
 export default function VoiceControlPage() {
@@ -15,8 +14,9 @@ export default function VoiceControlPage() {
   const [devices, setDevices] = useState([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState("");
   const [status, setStatus] = useState("idle"); 
-  const [transcript, setTranscript] = useState("");
   const [error, setError] = useState("");
+  const [matchMessage, setMatchMessage] = useState("");
+  const [matchVariant, setMatchVariant] = useState("secondary");
   const [audioLevel, setAudioLevel] = useState(0);
 
   const wsRef = useRef(null);
@@ -84,6 +84,7 @@ export default function VoiceControlPage() {
   const stopDetect = useCallback(() => {
     stoppingRef.current = true;
     setStatus("idle");
+    setMatchMessage("");
     cleanup();
   }, [cleanup]);
 
@@ -106,7 +107,7 @@ export default function VoiceControlPage() {
 
   const startDetect = useCallback(async () => {
     if (!token || !selectedDeviceId) return setError("Authentication failed or Mic not selected.");
-    stoppingRef.current = false; setError(""); setTranscript(""); setStatus("connecting");
+    stoppingRef.current = false; setError(""); setMatchMessage(""); setStatus("connecting");
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -160,8 +161,22 @@ export default function VoiceControlPage() {
           const s = payload.data.status; setStatus(s);
           processingRef.current = s === "processing";
           if (s !== "processing") scheduleNextChunk();
-        } else if (payload.event === "voice_transcript") {
-          setTranscript(payload.data.text);
+        } else if (payload.event === "voice_log") {
+          const message = payload.data?.message || "";
+          setMatchMessage(message);
+          const normalized = message.toLowerCase();
+          if (normalized.includes("dang xu ly") || normalized.includes("processing")) {
+            setStatus("processing");
+          }
+          if (normalized.includes("wake")) {
+            setMatchVariant("success");
+          } else if (normalized.includes("goodbye")) {
+            setMatchVariant("secondary");
+          } else if (normalized.includes("lenh") || normalized.includes("command")) {
+            setMatchVariant("primary");
+          } else {
+            setMatchVariant("info");
+          }
         } else if (payload.event === "voice_error") {
           setError(payload.data.message); processingRef.current = false; scheduleNextChunk();
         }
@@ -196,6 +211,20 @@ export default function VoiceControlPage() {
     if (status === "waiting_wake_phrase") return "primary"; // Xanh biển khi Standby
     if (status === "listening_command") return "success";  // Xanh lá khi đã Wake Word
     return "secondary";
+  };
+
+  const statusTitle = () => {
+    if (!isRunning) return "Voice Detect Off";
+    if (status === "processing") return "Processing...";
+    if (status === "listening_command") return "Listening...";
+    return "Waiting for Wake Word";
+  };
+
+  const statusHint = () => {
+    if (!isRunning) return "Tap icon to connect";
+    if (status === "processing") return "Processing your voice command";
+    if (status === "listening_command") return "Say your command now";
+    return 'Say "Hey Yolo" to activate';
   };
 
   return (
@@ -246,10 +275,10 @@ export default function VoiceControlPage() {
 
               {/* Typography đồng bộ h5 */}
               <h5 className="fw-bold mb-2">
-                {isRunning ? (isListening ? "Listening..." : "Waiting for Wake Word") : "Voice Detect Off"}
+                {statusTitle()}
               </h5>
               <p className="text-muted small px-3">
-                {!isRunning ? "Tap icon to connect" : (isListening ? "Say your command now" : 'Say "Hey Yolo" to activate')}
+                {statusHint()}
               </p>
 
               <Form.Group className="w-100 text-start mt-4 bg-light p-3 rounded-3 border">
@@ -270,26 +299,15 @@ export default function VoiceControlPage() {
           </Card>
         </Col>
 
-        {/* CỘT PHẢI: TRANSCRIPT & GUIDE (Cân bằng 6-6) */}
+        {/* CỘT PHẢI: GUIDE (Cân bằng 6-6) */}
         <Col md={6}>
           <div className="d-flex flex-column h-100 gap-4">
-            
-            <Card className="shadow-sm border-0 flex-grow-1">
-              <Card.Body className="p-4 d-flex flex-column">
-                <div className="d-flex align-items-center mb-3">
-                  <MessageSquare size={18} className="text-primary me-2" />
-                  <h5 className="fw-bold mb-0">Transcription</h5>
-                </div>
-                
-                <div className="bg-light rounded-3 p-4 text-center border flex-grow-1 d-flex align-items-center justify-content-center">
-                  {transcript ? (
-                    <h5 className="fw-normal text-dark mb-0 fst-italic">"{transcript}"</h5>
-                  ) : (
-                    <span className="text-muted small">Voice output will appear here...</span>
-                  )}
-                </div>
-              </Card.Body>
-            </Card>
+
+            {matchMessage && (
+              <Alert variant={matchVariant} className="rounded-3 border-0 shadow-sm mb-0">
+                {matchMessage}
+              </Alert>
+            )}
 
             <Card className="shadow-sm border-0">
               <Card.Body className="p-4">

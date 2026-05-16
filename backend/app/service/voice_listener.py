@@ -18,7 +18,7 @@ from app.service.mqtt import mqtt_service
 
 logger = logging.getLogger(__name__)
 
-VOICE_PROCESSING_TIMEOUT_SECONDS = 3.0
+VOICE_PROCESSING_TIMEOUT_SECONDS = 6.0
 
 
 @dataclass
@@ -44,8 +44,8 @@ class VoiceWebSocketProcessor:
         )
         self.wake_phrases = [
             p.strip().lower() for p in settings.VOICE_WAKE_PHRASES.split(",") if p.strip()
-        ] or ["hey yolo", "hi yolo"]
-        self.wake_prompt = "hey yolo hi yolo wake word"
+        ] or ["hey yolo", "hi yolo", "yolo"]
+        self.wake_prompt = "yolo"
         self.sessions: dict[int, VoiceSessionState] = {}
 
     @staticmethod
@@ -61,9 +61,9 @@ class VoiceWebSocketProcessor:
             return "FAN_ON"
         if any(x in text for x in ["fan off", "turn off fan", "turn fan off"]):
             return "FAN_OFF"
-        if any(x in text for x in ["light on", "turn on light", "turn light on"]):
+        if any(x in text for x in ["line on", "light on", "turn on light", "turn light on"]):
             return "LIGHT_ON"
-        if any(x in text for x in ["light off", "turn off light", "turn light off"]):
+        if any(x in text for x in ["line off", "light off", "light of", "turn off light", "turn light off"]):
             return "LIGHT_OFF"
         return None
 
